@@ -1,0 +1,28 @@
+import { useEffect, useState } from 'react';
+import { useSyncVersion } from '../lib/sync.js';
+import { Link } from 'react-router-dom';
+import { BedDouble, Bus, Utensils, ArrowRight, Car } from 'lucide-react';
+import { api } from '../lib/api.js';
+import { PageHeader, Badge, Empty } from '../components/ui.jsx';
+export default function Bookings() {
+  const [d, setD] = useState(null), [err, setErr] = useState(''), [tab, setTab] = useState('stays');
+  const load = () => Promise.all([api('/bookings/mine'), api('/rentals/mine')]).then(([a, b]) => setD({ ...a, rentals: b })).catch(e => setErr(e.message));
+  const cancelRent = async (id) => { if (confirm('Cancel this rental?')) { await api(`/rentals/${id}/cancel`, { method: 'POST' }).catch(e => setErr(e.message)); load(); } }; const ver = useSyncVersion(); useEffect(() => { load(); }, [ver]);
+  const pay = async (id) => { await api(`/payments/${id}/sandbox-confirm`, { method: 'POST' }).catch(e => setErr(e.message)); load(); };
+  const cancel = async (id) => { if (confirm('Cancel this booking?')) { await api(`/bookings/stay/${id}/cancel`, { method: 'POST' }).catch(e => setErr(e.message)); load(); } };
+  if (err && !d) return <main className="mx-auto max-w-3xl px-4 py-10"><Empty>{err.includes('Sign in') ? <>Please <Link className="underline" to="/login">sign in</Link> to see your bookings.</> : err}</Empty></main>;
+  if (!d) return <p className="p-8">Loading…</p>;
+  const tabs = [['stays', 'Stays', BedDouble, d.stays.length], ['rentals', 'Rentals', Car, d.rentals.length], ['rides', 'Rides', Bus, d.rides.length], ['tables', 'Tables', Utensils, d.tables.length]];
+  const card = 'flex flex-wrap items-center justify-between gap-3 rounded-3xl border border-line bg-white p-5';
+  return (<main className="mx-auto max-w-4xl px-4 py-6"><PageHeader title="My bookings" sub="Stays, rides and table reservations in one place." />
+    <div className="mt-5 flex gap-2">{tabs.map(([id, l, I, n]) => <button key={id} onClick={() => setTab(id)} className={`inline-flex items-center gap-2 rounded-full border px-4 py-2 text-sm ${tab === id ? 'border-ocean bg-ocean text-foam' : 'border-line bg-white'}`}><I size={16} />{l} <span className="opacity-70">{n}</span></button>)}</div>
+    {err && <p role="alert" className="mt-3 rounded-xl bg-red-50 p-3 text-sm text-red-800">{err}</p>}
+    <div className="mt-4 grid gap-3">
+      {tab === 'stays' && (d.stays.length === 0 ? <Empty Icon={BedDouble}>No stays yet. <Link className="underline" to="/accommodations">Find a place to stay</Link></Empty> : d.stays.map(s => <div key={s.id} className={card}><div><p className="font-display text-xl">{s.name}</p><p className="text-sm text-ocean/70">{s.check_in.slice(0, 10)} <ArrowRight size={12} className="inline" /> {s.check_out.slice(0, 10)} · ₱{s.total.toLocaleString()}</p><p className="mt-1 flex gap-2"><Badge s={s.status} /><Badge s={s.payment_status === 'paid' ? 'paid' : 'pending'}>payment {s.payment_status}</Badge></p></div>
+        <div className="flex gap-2">{s.payment_status === 'pending' && s.status !== 'cancelled' && <button onClick={() => pay(s.payment_id)} className="rounded-full bg-ocean px-5 py-2 text-sm font-medium text-foam hover:bg-teal">Pay now (sandbox)</button>}{['pending', 'confirmed'].includes(s.status) && <button onClick={() => cancel(s.id)} className="rounded-full border border-line px-4 py-2 text-sm">Cancel</button>}</div></div>))}
+      {tab === 'rentals' && (d.rentals.length === 0 ? <Empty Icon={Car}>No rentals yet. <Link className="underline" to="/transportation">Rent a vehicle</Link></Empty> : d.rentals.map(r => <div key={r.id} className={card}><div><p className="font-display text-xl">{r.vehicle}</p><p className="text-sm text-ocean/70">{r.start_date} <ArrowRight size={12} className="inline" /> {r.end_date} · {r.mode === 'driver' ? `with driver${r.driver_name ? ' (' + r.driver_name + ')' : ''}` : 'self-drive'} · ₱{r.total.toLocaleString()}</p><p className="text-sm text-ocean/70">To: {r.destinations.join(', ')} · pickup {r.pickup}</p><p className="mt-1 flex gap-2"><Badge s={r.status} /><Badge s={r.payment_status === 'paid' ? 'paid' : 'pending'}>payment {r.payment_status}</Badge></p></div>
+        <div className="flex gap-2">{r.payment_status === 'pending' && !['cancelled', 'rejected'].includes(r.status) && <button onClick={() => pay(r.payment_id)} className="rounded-full bg-ocean px-5 py-2 text-sm font-medium text-foam hover:bg-teal">Pay now (sandbox)</button>}{['pending', 'confirmed'].includes(r.status) && <button onClick={() => cancelRent(r.id)} className="rounded-full border border-line px-4 py-2 text-sm">Cancel</button>}</div></div>))}
+      {tab === 'rides' && (d.rides.length === 0 ? <Empty Icon={Bus}>No rides yet. <Link className="underline" to="/transportation">Request a ride</Link></Empty> : d.rides.map(t => <div key={t.id} className={card}><div><p className="font-display text-xl">{t.pickup} <ArrowRight size={14} className="inline" /> {t.dropoff}</p><p className="text-sm text-ocean/70">{new Date(t.pickup_at).toLocaleString()} · {t.passengers} passenger(s){t.driver_name && ` · driver ${t.driver_name}`}</p></div><Badge s={t.status} /></div>))}
+      {tab === 'tables' && (d.tables.length === 0 ? <Empty Icon={Utensils}>No reservations yet. <Link className="underline" to="/restaurants">Find a restaurant</Link></Empty> : d.tables.map(t => <div key={t.id} className={card}><div><p className="font-display text-xl">{t.name}</p><p className="text-sm text-ocean/70">{new Date(t.reserved_at).toLocaleString()} · party of {t.party_size}</p></div><Badge s={t.status} /></div>))}
+    </div><p className="mt-4 text-xs text-ocean/55">Payments in this prototype are simulated. No real money moves.</p></main>);
+}

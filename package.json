@@ -1,0 +1,3 @@
+{ "name": "catanduanes-shared-backend", "private": true, "type": "module",
+  "scripts": { "test": "node --test netlify/test/function.test.mjs" },
+  "dependencies": { "@netlify/blobs": "^8.1.0" } }
