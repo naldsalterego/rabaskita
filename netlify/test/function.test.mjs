@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { makeHandler } from '../functions/handler.mjs';
+import { makeHandler, makeMailer } from '../functions/handler.mjs';
 const mem = () => { const m = new Map(); return { get: async (k, o) => { const v = m.get(k); if (v === undefined) return null; return o?.type === 'json' ? structuredClone(v) : v; }, setJSON: async (k, v) => { m.set(k, structuredClone(v)); }, set: async (k, v) => { m.set(k, v); }, delete: async (k) => { m.delete(k); }, list: async ({ prefix }) => ({ blobs: [...m.keys()].filter(k => k.startsWith(prefix)).map(key => ({ key })) }) }; };
 const mk = (env = {}) => { const store = mem(); const h = makeHandler(() => store, env); return async (method, path, body, token, raw) => { const r = await h(new Request('https://x.test' + path, { method, headers: { ...(token && { Authorization: 'Bearer ' + token }), ...(body && !raw && { 'Content-Type': 'application/json' }) }, body: raw ? body : body && JSON.stringify(body) })); return { status: r.status, body: r.headers.get('content-type')?.includes('json') ? await r.json() : Buffer.from(await r.arrayBuffer()) }; }; };
 const login = async (call, who, pw = 'demo1234') => (await call('POST', '/api/auth/login', { email: who + '@demo.test', password: pw })).body.token;
@@ -45,18 +45,41 @@ test('logo uploads keep PNG transparency, and branding is shared with every visi
   const admin = await login2(), png = Buffer.from([0x89, 0x50, 0x4e, 0x47, 1, 2, 3]);
   const up = await (await send('POST', '/api/photos', { headers: { Authorization: 'Bearer ' + admin, 'Content-Type': 'image/png' }, body: png })).json(); assert.match(up.url, /\.png$/);
   const img = await send('GET', up.url); assert.equal(img.status, 200); assert.equal(img.headers.get('content-type'), 'image/png');
-  const put = await send('PUT', '/api/branding', { headers: { Authorization: 'Bearer ' + admin, 'Content-Type': 'application/json' }, body: JSON.stringify({ siteName: 'Rabas Kita!', logo: up.url, partnerLogo: '', showPartner: true, partnerBackdrop: 'navy' }) }); assert.equal(put.status, 200);
+  const put = await send('PUT', '/api/branding', { headers: { Authorization: 'Bearer ' + admin, 'Content-Type': 'application/json' }, body: JSON.stringify({ siteName: 'TRISIKSTI', logo: up.url, partnerLogo: '', showPartner: true, partnerBackdrop: 'navy' }) }); assert.equal(put.status, 200);
   assert.equal((await (await send('GET', '/api/branding')).json()).logo, up.url);                         // any visitor, no sign-in
-  await send('PUT', '/api/branding', { headers: { Authorization: 'Bearer ' + admin, 'Content-Type': 'application/json' }, body: JSON.stringify({ siteName: 'Rabas Kita!', logo: '', partnerLogo: '', showPartner: true, partnerBackdrop: 'navy' }) });
+  await send('PUT', '/api/branding', { headers: { Authorization: 'Bearer ' + admin, 'Content-Type': 'application/json' }, body: JSON.stringify({ siteName: 'TRISIKSTI', logo: '', partnerLogo: '', showPartner: true, partnerBackdrop: 'navy' }) });
   assert.equal((await send('GET', up.url)).status, 404);                                                  // the replaced logo file is removed
 });
 
 test('document uploads accept PDFs and serve them back as PDFs', async () => {
   const store = mem(), h = makeHandler(() => store, {}), send = (method, path, opts = {}) => h(new Request('https://x.test' + path, { method, headers: opts.headers, body: opts.body }));
   const token = (await (await send('POST', '/api/auth/login', { headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email: 'owner@demo.test', password: 'demo1234' }) })).json()).token;
-  const pdf = Buffer.from('%PDF-1.4 test'); const up = await (await send('POST', '/api/photos', { headers: { Authorization: 'Bearer ' + token, 'Content-Type': 'application/pdf' }, body: pdf })).json(); assert.match(up.url, /\.pdf$/);
+  const pdf = Buffer.from('%PDF-1.4 test'); assert.equal((await send('POST', '/api/photos', { headers: { Authorization: 'Bearer ' + token, 'Content-Type': 'application/pdf' }, body: pdf })).status, 403);
+  const adm = (await (await send('POST', '/api/auth/login', { headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email: 'admin@demo.test', password: 'demo1234' }) })).json()).token;
+  const up = await (await send('POST', '/api/photos', { headers: { Authorization: 'Bearer ' + adm, 'Content-Type': 'application/pdf' }, body: pdf })).json(); assert.match(up.url, /\.pdf$/);
   const got = await send('GET', up.url); assert.equal(got.headers.get('content-type'), 'application/pdf'); assert.deepEqual(Buffer.from(await got.arrayBuffer()), pdf);
   const biz = (await (await send('GET', '/api/owner/businesses', { headers: { Authorization: 'Bearer ' + token } })).json())[0];
-  const add = await send('POST', '/api/owner/docs/' + biz.id, { headers: { Authorization: 'Bearer ' + token, 'Content-Type': 'application/json' }, body: JSON.stringify({ type: 'bir', file: up.url, fileName: 'bir.pdf', number: 'X' }) }); assert.equal(add.status, 200);
+  const add = await send('POST', '/api/owner/docs/' + biz.id, { headers: { Authorization: 'Bearer ' + token, 'Content-Type': 'application/json' }, body: JSON.stringify({ type: 'bir', file: up.url, fileName: 'bir.pdf', number: 'X' }) }); assert.equal(add.status, 403);   // owners cannot add papers
   assert.equal((await (await send('GET', '/api/accommodations')).json())[0].papers_status !== undefined, true);
+});
+
+test('email alerts: off by default, sent through the mail service when configured, never to demo accounts', async () => {
+  assert.equal(makeMailer({}), undefined); assert.equal(makeMailer({ RESEND_API_KEY: 'k' }), undefined);
+  const real = globalThis.fetch, calls = []; globalThis.fetch = async (u, o) => { calls.push({ u, o }); return { ok: true, status: 200 }; };
+  try {
+    const mail = makeMailer({ RESEND_API_KEY: 'key123', NOTIFY_FROM: 'Alerts <alerts@site.test>' });
+    await mail({ to: 'owner@demo.test', subject: 's', text: 't' }); assert.equal(calls.length, 0);
+    await mail({ to: 'real@inn.test.ph', subject: 'New booking', text: 'Body' }); assert.equal(calls.length, 1); assert.equal(calls[0].u, 'https://api.resend.com/emails');
+    assert.equal(calls[0].o.headers.Authorization, 'Bearer key123'); assert.deepEqual(JSON.parse(calls[0].o.body), { from: 'Alerts <alerts@site.test>', to: ['real@inn.test.ph'], subject: 'New booking', text: 'Body' });
+  } finally { globalThis.fetch = real; }
+});
+test('owner dashboard works through the shared backend: alerts, reservations and the site link', async () => {
+  const call = mk(); const owner = await login(call, 'owner'), tourist = await login(call, 'tourist');
+  const bid = (await call('GET', '/api/owner/businesses', null, owner)).body[0].id; const inn = (await call('GET', '/api/owner/business/' + bid, null, owner)).body;
+  const fam = inn.rooms.find(r => r.name === 'Family room'); const d = (n) => new Date(Date.now() + n * 864e5).toISOString().slice(0, 10);
+  const bk = await call('POST', '/api/bookings/stay', { roomId: fam.id, checkIn: d(6), checkOut: d(7), guests: 2 }, tourist); assert.equal(bk.status, 200);
+  assert.equal((await call('GET', '/api/notifications', null, owner)).body.unread, 1);
+  assert.equal((await call('PATCH', '/api/owner/reservations/stay/' + bk.body.booking.id, { status: 'confirmed' }, owner)).status, 200);
+  assert.equal((await call('GET', '/api/notifications', null, tourist)).body.items[0].link, '/bookings');
+  assert.equal((await call('GET', '/api/owner/business/' + bid, null, tourist)).status, 403);
 });

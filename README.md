@@ -35,7 +35,7 @@ Sign in as Admin. The sidebar lets the tourism office add, edit and delete desti
 - Shops show only souvenir shops and groceries; restaurants stay under Eat.
 - Check-in points are shown only to signed-in users.
 - Each business owner sees only their own businesses (the sample owner owns just "Seaside Inn").
-- Ship is now a vehicle rental catalog (with driver or self-drive, per-day price, chosen destinations, availability check, provider accept/reject, payment in My bookings). Airport and port ride requests remain under the second tab.
+- Roam is now a vehicle rental catalog (with driver or self-drive, per-day price, chosen destinations, availability check, provider accept/reject, payment in My bookings). Airport and port ride requests remain under the second tab.
 The rental, admin content-manager and per-destination features run in the in-browser demo backend; the Express server in `server/` does not have them yet. Demo data was reset to a new version (v2), so old browser data is replaced on first load.
 
 ## Destination, stay, restaurant, shop, vehicle and reward photos
@@ -59,10 +59,27 @@ In shared mode every open page checks a tiny revision number (`/api/sync`) every
 ## Branding (admin)
 Admin > Branding changes the site name (also the browser tab title), the tagline, the main logo (header, footer and tab icon) and the developer badge beside it (logo, on/off, background). Logos are uploaded as PNG so transparency is kept. Leaving a logo empty uses the built-in one. In shared mode every visitor sees the change within a few seconds.
 
+## Business owner dashboard
+Sign in as a business owner and open the dashboard. It shows one business at a time (a row of buttons switches between your businesses if you have several), with these sections:
+- **Overview:** reservations waiting for a reply, upcoming ones, revenue (stays), a "page is X% complete" checklist, and a preview of how the business looks in the tourist list.
+- **My page:** the cover photo, the photo album, description, hours, phone, address, map position and amenities (stays) or cuisines, price level and the online table reservation switch (restaurants). Changes show to tourists as soon as they are saved. The approved name, municipality and category are fixed because the tourism office checked them against the papers.
+- **Rooms / Menu / Products:** stays manage rooms (price, sleeps, units; units set to 0 pauses a room, and a room that has booking history cannot be deleted), restaurants manage the menu, shops list products with an optional photo that tourists see on the shop page.
+- **Reservations** (stays and restaurants): accept, decline, cancel, complete or mark a no-show. The guest is told when a request is accepted, declined or cancelled. A cancelled booking the guest already paid for needs a manual refund; the app warns about this.
+- **Papers:** see which required papers the tourism office has added and verified (read-only; owners cannot upload).
+A new hotel or restaurant gets the right papers list and tools from the moment it is registered.
+These features, like the alerts below, run in the shared Netlify / in-browser backend; the Express server in `server/` does not have them. Existing saved data keeps working: the new lists (products, alerts) are added automatically the next time data loads, and nothing already stored is changed.
+
+## Transport provider dashboard
+Providers get the same layout as business owners, with tabs: **Overview** (stats, "page is X% complete" checklist, preview card), **My page** (cover photo, photo album, description, phone, hours, address), **Vehicles** (add, edit, pause, delete; each vehicle has its own cover photo and album), **Routes and fares**, **Requests** (rentals and airport/port rides) and **Papers** (read-only). The cover, album and description show on the vehicle pages tourists see. These run in the shared Netlify / in-browser backend, not the Express server.
+
+## Alerts and email
+Every signed-in person has an **Alerts** bell in the header. Owners get an alert for each new booking request, payment and cancellation, and each table reservation; guests get one when the business accepts, declines or cancels. The last 100 alerts per person are kept.
+Emails are optional and only work on the shared Netlify version (a browser-only demo cannot send mail). To switch them on, add two environment variables in Netlify (Site configuration > Environment variables): `RESEND_API_KEY` (from a free Resend account) and `NOTIFY_FROM` (a sender on a domain you verified in Resend, for example `TRISIKSTI <alerts@yourdomain.com>`). Without them, alerts still appear on the site. Addresses ending in `@demo.test` never get mail. A mail failure never blocks a booking.
+
 ## Business papers, reports and the application form
-- **Papers:** each stay, restaurant, shop and transport provider has a checklist of required papers (BIR registration, business registration, mayor's permit, plus sanitary / fire safety / franchise where relevant). Owners and providers upload PDFs or photos from their dashboard; the admin can also add them in the Add/Edit drawer. Papers uploaded by owners wait for the admin to verify them. A business owner's listing can only be approved when every required paper is verified. Tourists see the checklist (and, if allowed, the file) on the business page and a "Papers complete" badge on cards. The required lists are in `REQUIRED` in `client/src/lib/backend.js`; change them to match the tourism office's rules.
+- **Papers:** each stay, restaurant, shop and transport provider has a checklist of required papers (BIR registration, business registration, mayor's permit, plus sanitary / fire safety / franchise where relevant). Only the admin adds papers (PDF or photo, in the Add/Edit drawer); papers the admin adds are marked verified. Owners and providers give copies to the tourism office and can only view the checklist. A business owner's listing can only be approved when every required paper is verified. Tourists see the checklist (and, if allowed, the file) on the business page and a "Papers complete" badge on cards. The required lists are in `REQUIRED` in `client/src/lib/backend.js`; change them to match the tourism office's rules.
 - **Reports:** Admin > Reports > Registered businesses report (filter by type, status, papers) downloads CSV (Excel) or PDF.
-- **Application form:** `client/public/forms/Rabas-Kita-Business-Application-Form.pdf` (fillable) and `.docx`, linked on the public `/join` page, in the footer, and in the admin Reports tab.
+- **Application form:** a fillable PDF that is generated in the browser (`client/src/lib/applicationForm.js`) with the current site name and logos from Admin > Branding, plus a fixed Word version at `client/public/forms/TRISIKSTI-Business-Application-Form.docx`. Both are linked on the public `/join` page and in the admin Reports tab; the Word file keeps the name and logo it was made with.
 - Privacy: documents can contain private details; the admin can hide a file from tourists (the checklist still shows).
 
 ## QR scanning

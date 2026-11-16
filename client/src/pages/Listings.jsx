@@ -5,10 +5,12 @@ import { MapPin, Clock, Ticket, Car, Gift, QrCode, Phone } from 'lucide-react';
 import { api } from '../lib/api.js';
 import Reviews from '../components/Reviews.jsx';
 import Cover from '../components/Cover.jsx';
+import { Photo } from '../components/Photo.jsx';
 import RouteMap from '../components/RouteMap.jsx';
 import { PapersPublic, PaperChip } from '../components/Docs.jsx';
 import Album, { albumOf, CountBadge } from '../components/Album.jsx';
 import { inp, btn } from '../components/ui.jsx';
+import { useBranding } from '../lib/branding.js';
 export function useOne(path) { const [d, setD] = useState(null), [err, setErr] = useState(''), ver = useSyncVersion(); useEffect(() => { api(path).then(setD).catch(e => setErr(e.message)); }, [path, ver]); return [d, err]; }
 export const Banner = ({ name, sub, badge, photo }) => <Cover name={name} photo={photo} className="h-56 md:h-72"><div className="absolute inset-0 bg-gradient-to-t from-ocean/80 via-ocean/20 to-transparent" />
   <div className="absolute bottom-0 left-0 right-0 mx-auto max-w-5xl px-4 pb-6 text-foam"><span className="inline-flex items-center gap-1 rounded-full bg-white/20 px-3 py-1 text-sm backdrop-blur"><MapPin size={14} />{sub}</span><h1 className="mt-2 font-display text-4xl md:text-6xl font-bold">{name}</h1></div>{badge && <span className="absolute right-4 top-4 rounded-full bg-sand px-4 py-1.5 text-sm font-semibold text-ocean">{badge}</span>}</Cover>;
@@ -18,11 +20,12 @@ export const hoursText = (h) => h ? Object.entries(h).map(([k, v]) => `${k}: ${v
 export const Err = ({ m }) => <p className="p-8">{m}</p>;
 
 export default function Listings({ kind }) {
+  const brand = useBranding();
   const [rows, setRows] = useState(null), [f, setF] = useState('');
   const ver = useSyncVersion();
   useEffect(() => { api(`/${kind}${f ? `?${kind === 'restaurants' ? 'cuisine' : 'category'}=${encodeURIComponent(f)}` : ''}`).then(setRows).catch(() => setRows([])); }, [kind, f, ver]);
   const base = kind === 'restaurants' ? 'restaurants' : 'businesses';
-  return (<main className="mx-auto max-w-6xl px-4 py-8"><h1 className="font-display text-4xl md:text-5xl">{kind === 'restaurants' ? 'Where to eat' : 'Souvenirs and groceries'}</h1><p className="mt-1 text-ocean/75">Own a business? <Link to="/join" className="underline">Join Rabas Kita!</Link> Look for the “Papers complete” badge to see which businesses have their papers verified.</p>
+  return (<main className="mx-auto max-w-6xl px-4 py-8"><h1 className="font-display text-4xl md:text-5xl">{kind === 'restaurants' ? 'Where to eat' : 'Souvenirs and groceries'}</h1><p className="mt-1 text-ocean/75">Own a business? <Link to="/join" className="underline">Join {brand.siteName}</Link> Look for the “Papers complete” badge to see which businesses have their papers verified.</p>
     {kind === 'restaurants' ? <input className={`${inp} mt-4 w-full max-w-sm`} placeholder="Filter by cuisine (e.g. Seafood)" value={f} onChange={e => setF(e.target.value)} /> : <div className="mt-4 flex gap-2 overflow-x-auto">{[['', 'All'], ['Souvenir shops', 'Souvenir shops'], ['Groceries', 'Groceries']].map(([v, l]) => <button key={v} onClick={() => setF(v)} className={`shrink-0 rounded-full border px-4 py-1.5 text-sm ${f === v ? 'border-ocean bg-ocean text-foam' : 'border-line bg-white'}`}>{l}</button>)}</div>}
     {rows === null ? <p className="mt-6">Loading…</p> : rows.length === 0 ? <p className="mt-6">{kind === 'restaurants' ? 'No restaurants listed yet.' : 'No shops listed yet.'}</p> : <div className="mt-6 grid gap-5 sm:grid-cols-2 lg:grid-cols-3">{rows.map(r => <Link key={r.id} to={`/${base}/${r.restaurant_id || r.id}`} className="lift block overflow-hidden rounded-3xl bg-white border border-line"><Cover name={r.name} photo={r.cover_photo || r.photos?.[0]} className="h-36"><CountBadge n={albumOf(r).length} /></Cover>
       <div className="p-4"><h2 className="font-display text-xl">{r.name}</h2><p className="text-sm text-teal">{r.municipality}{r.cuisines?.length ? ` · ${r.cuisines.join(', ')}` : ''}{r.category && ` · ${r.category}`}</p>{r.papers_status === 'complete' && <PaperChip />}<p className="mt-1 text-sm text-ocean/75 line-clamp-2">{r.description}</p></div></Link>)}</div>}</main>);
@@ -54,6 +57,6 @@ export function RestaurantDetail() {
 export function BusinessDetail() {
   const { id } = useParams(); const [b, err] = useOne(`/businesses/${id}`); if (err) return <Err m={err} />; if (!b) return <Err m="Loading…" />;
   return (<main><Banner name={b.name} photo={b.cover_photo || b.photos?.[0]} sub={`${b.municipality}${b.category ? ' · ' + b.category : ''}`} />
-    <div className="mx-auto max-w-5xl px-4 py-8 grid gap-8 lg:grid-cols-3"><div className="lg:col-span-2"><p className="text-lg">{b.description}</p>{albumOf(b).length > 0 && <Section title="Photo album"><Album photos={albumOf(b)} name={b.name} /></Section>}<Section title="Business papers"><PapersPublic papers={b.papers} /></Section><Section title="Find us"><RouteMap lat={b.lat} lng={b.lng} name={b.name} /></Section><Reviews type="business" id={id} /></div>
+    <div className="mx-auto max-w-5xl px-4 py-8 grid gap-8 lg:grid-cols-3"><div className="lg:col-span-2"><p className="text-lg">{b.description}</p>{b.products?.length > 0 && <Section title="Products"><ul className="grid gap-3 sm:grid-cols-2">{b.products.map(x => <li key={x.id} className="flex gap-3 rounded-2xl border border-line bg-white p-3">{x.photo ? <Photo src={x.photo} alt={x.name} className="h-20 w-20 shrink-0 rounded-xl object-cover" /> : <span aria-hidden className="h-20 w-20 shrink-0 rounded-xl bg-foam" />}<div className="min-w-0"><p className="font-display text-lg leading-tight">{x.name}</p><p className="font-bold text-teal">₱{Number(x.price).toLocaleString()}</p>{x.description && <p className="text-sm text-ocean/70">{x.description}</p>}</div></li>)}</ul></Section>}{albumOf(b).length > 0 && <Section title="Photo album"><Album photos={albumOf(b)} name={b.name} /></Section>}<Section title="Business papers"><PapersPublic papers={b.papers} /></Section><Section title="Find us"><RouteMap lat={b.lat} lng={b.lng} name={b.name} /></Section><Reviews type="business" id={id} /></div>
       <aside><div className="rounded-3xl bg-white border border-line p-5 grid gap-4"><Fact Icon={MapPin} label="Address" value={b.address} /><Fact Icon={Phone} label="Phone" value={b.phone} /><Fact Icon={Clock} label="Hours" value={hoursText(b.hours)} /></div></aside></div></main>);
 }

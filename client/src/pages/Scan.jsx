@@ -14,7 +14,7 @@ export default function Scan() {
   const [round, setRound] = useState(0), [res, setRes] = useState(null), [busy, setBusy] = useState(false), [code, setCode] = useState(''), [problem, setProblem] = useState(''), file = useRef(null);
   async function submit(text) {
     const token = tokenFromScan(text); setBusy(true);
-    if (!token) { setRes({ error: "That QR code isn't a Rabas Kita! place code." }); setBusy(false); return; }
+    if (!token) { setRes({ error: "That QR code isn't a TRISIKSTI place code." }); setBusy(false); return; }
     try { setRes({ ok: await api('/checkin', { method: 'POST', body: { token } }) }); } catch (e) { setRes({ error: e.message.includes('Sign in') ? 'Please sign in to collect points.' : e.message }); }
     setBusy(false);
   }

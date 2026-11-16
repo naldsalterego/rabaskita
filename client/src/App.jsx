@@ -12,6 +12,7 @@ import Rewards from './pages/Rewards.jsx';
 import Stays, { StayDetail } from './pages/Stays.jsx';
 import Transport, { VehicleDetail } from './pages/Transport.jsx';
 import Bookings from './pages/Bookings.jsx';
+import Notifications from './pages/Notifications.jsx';
 import Planner from './pages/Planner.jsx';
 import Trip from './pages/Trip.jsx';
 import Dashboard from './pages/Dashboard.jsx';
@@ -29,6 +30,7 @@ export default function App() {
     <Route path="/transportation" element={<Transport />} />
     <Route path="/transportation/:id" element={<VehicleDetail />} />
     <Route path="/bookings" element={<Bookings />} />
+    <Route path="/notifications" element={<Notifications />} />
     <Route path="/itinerary" element={<Planner />} />
     <Route path="/trip/:token" element={<Trip />} />
     <Route path="/dashboard" element={<Dashboard />} />

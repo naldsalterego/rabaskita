@@ -3,19 +3,24 @@ import { Link, NavLink } from 'react-router-dom';
 import Brand from './Brand.jsx';
 import { useBranding, DEFAULT_LOGO } from '../lib/branding.js';
 import { photoUrl } from '../lib/photos.js';
-import { Compass, BedDouble, Utensils, Ship, Route as RouteIcon, Gift, Store, LogIn, UserPlus, Menu, X, LayoutDashboard, Ticket, LogOut } from 'lucide-react';
+import { Compass, BedDouble, Utensils, Backpack, Route as RouteIcon, Gift, Store, LogIn, UserPlus, Menu, X, LayoutDashboard, Ticket, LogOut, Bell } from 'lucide-react';
+import { api } from '../lib/api.js';
+import { useLoad } from './ui.jsx';
 // [label, path, icon, color classes used when the tile is active]
-const ITEMS = [['Explore', '/explore', Compass, 'bg-coral'], ['Stays', '/accommodations', BedDouble, 'bg-sky'], ['Eat', '/restaurants', Utensils, 'bg-tang'], ['Ship', '/transportation', Ship, 'bg-leaf'], ['Planner', '/itinerary', RouteIcon, 'bg-rose'], ['Rewards', '/rewards', Gift, 'bg-teal'], ['Shops', '/businesses', Store, 'bg-ocean']];
+const ITEMS = [['Explore', '/explore', Compass, 'bg-coral'], ['Stays', '/accommodations', BedDouble, 'bg-sky'], ['Eat', '/restaurants', Utensils, 'bg-tang'], ['Roam', '/transportation', Backpack, 'bg-leaf'], ['Planner', '/itinerary', RouteIcon, 'bg-rose'], ['Rewards', '/rewards', Gift, 'bg-teal'], ['Shops', '/businesses', Store, 'bg-ocean']];
 const out = () => { localStorage.removeItem('token'); localStorage.removeItem('user'); location.href = '/'; };
 const tile = 'grid h-14 w-14 place-items-center rounded-2xl shadow-[0_6px_16px_-6px_rgba(37,48,143,.35)] transition duration-200 group-hover:-translate-y-0.5 group-hover:shadow-[0_10px_20px_-6px_rgba(37,48,143,.45)]';
 
-function Tile({ to, label, Icon, on, solid, onClick, big }) {
+function Tile({ to, label, Icon, on, solid, onClick, big, badge }) {
   const inner = (active) => (<span className="group flex w-[4.6rem] flex-col items-center gap-1.5">
-    <span className={`${tile} ${active ? `${on} text-white` : solid ? `${solid} text-white` : 'bg-white text-ocean'}`}><Icon size={26} strokeWidth={1.7} /></span>
+    <span className={`${tile} relative ${active ? `${on} text-white` : solid ? `${solid} text-white` : 'bg-white text-ocean'}`}><Icon size={26} strokeWidth={1.7} />{badge > 0 && <span aria-hidden className="absolute -right-1 -top-1 grid h-5 min-w-5 place-items-center rounded-full bg-coral px-1 text-xs font-bold text-white">{badge > 9 ? '9+' : badge}</span>}</span>
     <span className={`font-display text-xs font-bold leading-none ${active ? 'text-ocean' : 'text-ocean/85'}`}>{label}</span></span>);
-  return to ? <NavLink to={to} onClick={onClick} className="rounded-2xl" aria-label={label}>{({ isActive }) => inner(isActive)}</NavLink>
+  return to ? <NavLink to={to} onClick={onClick} className="rounded-2xl" aria-label={badge > 0 ? `${label}, ${badge} new` : label}>{({ isActive }) => inner(isActive)}</NavLink>
     : <button type="button" onClick={onClick} className="rounded-2xl" aria-label={label}>{inner(false)}</button>;
 }
+
+// Bell tile: shows how many alerts are unread. Only rendered for signed-in people.
+function Alerts({ onClick }) { const [d] = useLoad(() => api('/notifications')); return <Tile to="/notifications" label="Alerts" Icon={Bell} on="bg-teal" badge={d?.unread || 0} onClick={onClick} />; }
 
 function Account({ u }) {
   const [open, setOpen] = useState(false); const item = 'flex w-full items-center gap-2 whitespace-nowrap rounded-xl px-3 py-2 text-left hover:bg-foam';
@@ -39,11 +44,11 @@ export default function Nav() {
     <div className="mx-auto flex max-w-7xl items-center justify-between gap-4 px-4 py-2">
       <Brand />
       <nav aria-label="Main" className="hidden items-start gap-1 lg:flex">{ITEMS.map(([l, to, I, on]) => <Tile key={to} to={to} label={l} Icon={I} on={on} />)}<span className="mx-2 mt-1 h-12 w-px bg-line" />
-        {u ? <Account u={u} /> : <><Tile to="/login" label="Sign in" Icon={LogIn} on="bg-ocean" /><Tile to="/register" label="Join" Icon={UserPlus} on="bg-coral" solid="bg-coral" /></>}</nav>
+        {u ? <><Alerts /><Account u={u} /></> : <><Tile to="/login" label="Sign in" Icon={LogIn} on="bg-ocean" /><Tile to="/register" label="Join" Icon={UserPlus} on="bg-coral" solid="bg-coral" /></>}</nav>
       <button className="grid h-12 w-12 place-items-center rounded-2xl bg-white shadow-md lg:hidden" aria-label="Menu" aria-expanded={open} onClick={() => setOpen(!open)}>{open ? <X /> : <Menu />}</button></div>
     {open && <nav aria-label="Main" className="grid grid-cols-3 justify-items-center gap-y-4 border-t border-line px-4 pb-5 pt-4 sm:grid-cols-4 lg:hidden">
       {ITEMS.map(([l, to, I, on]) => <Tile key={to} to={to} label={l} Icon={I} on={on} onClick={close} />)}
-      {u ? <><Tile to="/bookings" label="Bookings" Icon={Ticket} on="bg-sky" onClick={close} /><Tile to="/dashboard" label="Dashboard" Icon={LayoutDashboard} on="bg-ocean" onClick={close} /><Tile label="Sign out" Icon={LogOut} onClick={out} /></>
+      {u ? <><Alerts onClick={close} /><Tile to="/bookings" label="Bookings" Icon={Ticket} on="bg-sky" onClick={close} /><Tile to="/dashboard" label="Dashboard" Icon={LayoutDashboard} on="bg-ocean" onClick={close} /><Tile label="Sign out" Icon={LogOut} onClick={out} /></>
         : <><Tile to="/login" label="Sign in" Icon={LogIn} on="bg-ocean" onClick={close} /><Tile to="/register" label="Join" Icon={UserPlus} on="bg-coral" solid="bg-coral" onClick={close} /></>}</nav>}
   </header>);
 }

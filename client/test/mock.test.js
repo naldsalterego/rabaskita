@@ -112,38 +112,41 @@ test('provider photos and credits page (admin-only edit)', async () => {
   const v = (await handle('GET', '/rentals/vehicles')).find(x => x.name === 'V'); assert.equal(v.provider_cover, 'idb:pc'); assert.deepEqual(v.provider_photos, ['idb:pa']);
 });
 test('branding: public read, admin-only edit, validation, reset', async () => {
-  localStorage.removeItem('token'); const b = await handle('GET', '/branding'); assert.equal(b.siteName, 'Rabas Kita!'); assert.equal(b.showPartner, true);
+  localStorage.removeItem('token'); const b = await handle('GET', '/branding'); assert.equal(b.siteName, 'TRISIKSTI'); assert.equal(b.showPartner, true);
   await fails(handle('PUT', '/branding', { siteName: 'X' }), /Sign in/); await login('tourist'); await fails(handle('PUT', '/branding', { siteName: 'X' }), /Forbidden/);
   await login('admin'); await fails(handle('PUT', '/branding', { siteName: '' }), /Site name/); await fails(handle('PUT', '/branding', { siteName: 'X', logo: 'javascript:alert(1)' }), /not valid/); await fails(handle('PUT', '/branding', { siteName: 'X', partnerBackdrop: 'red' }), /background/);
   const u = await handle('PUT', '/branding', { siteName: 'New Name!', tagline: 'Hi', logo: 'idb:l1', partnerLogo: '', showPartner: false, partnerBackdrop: 'white' }); assert.equal(u.logo, 'idb:l1'); assert.equal(u.showPartner, false);
   localStorage.removeItem('token'); const pub = await handle('GET', '/branding'); assert.equal(pub.siteName, 'New Name!'); assert.equal(pub.partnerBackdrop, 'white');
-  await login('admin'); await handle('POST', '/admin/reset'); localStorage.removeItem('token'); assert.equal((await handle('GET', '/branding')).siteName, 'Rabas Kita!');
+  await login('admin'); await handle('POST', '/admin/reset'); localStorage.removeItem('token'); assert.equal((await handle('GET', '/branding')).siteName, 'TRISIKSTI');
 });
-test('business papers: required list, owner uploads need verification, approval gate, public checklist, report', async () => {
+test('business papers: required list, only admin adds papers, approval gate, public checklist, report', async () => {
   localStorage.removeItem('token'); const dt = await handle('GET', '/doc-types'); assert.ok(dt.required.stays.includes('fire') && dt.required.shops.length === 3);
   const sample = (await handle('GET', '/accommodations')).find(a => a.name.startsWith('Seaside')); assert.equal(sample.papers_status, 'complete');
   const detail = await handle('GET', `/accommodations/${sample.accommodation_id}`); assert.equal(detail.papers.status, 'complete'); assert.ok(detail.papers.required.every(r => r.state === 'verified')); assert.equal(detail.papers.required[0].docs[0].file, '');
   assert.equal((await handle('GET', '/restaurants'))[0].papers_status, 'incomplete');
   await login('owner'); const nb = await handle('POST', '/businesses', { name: 'Papers Shop', municipalityId: 1, category: 'Souvenir shops' });
-  await fails(handle('POST', `/owner/docs/${nb.id}`, { type: 'bir', file: 'nope' }), /upload the document/);
-  for (const type of ['bir', 'registration', 'permit']) await handle('POST', `/owner/docs/${nb.id}`, { type, number: 'N-1', file: 'idb:doc1', fileName: type + '.pdf' });
-  assert.equal((await handle('GET', `/owner/docs/${nb.id}`)).status, 'review'); const mine = await handle('GET', `/owner/docs/${nb.id}`);
-  const del = await handle('DELETE', `/owner/docs/${nb.id}/${mine.required[0].docs[0].id}`); assert.equal(del.required[0].state, 'missing');   // an owner may remove their own unverified paper
-  await handle('POST', `/owner/docs/${nb.id}`, { type: 'bir', number: 'N-1', file: 'idb:doc1', fileName: 'bir.pdf' });
-  await login('tourist'); await fails(handle('GET', `/owner/docs/${nb.id}`), /Forbidden/);
+  // owners cannot add or remove papers; only the admin can, and admin-added papers are verified
+  await fails(handle('POST', `/owner/docs/${nb.id}`, { type: 'bir', number: 'N-1', file: 'idb:doc1', fileName: 'bir.pdf' }), /Forbidden/);
+  await fails(handle('DELETE', `/owner/docs/${nb.id}/x`), /Forbidden/);
+  assert.equal((await handle('GET', `/owner/docs/${nb.id}`)).status, 'incomplete');
   await login('admin'); await fails(handle('PATCH', `/admin/businesses/${nb.id}/status`, { status: 'approved' }), /required documents/);
-  for (const r of (await handle('GET', `/admin/docs/businesses/${nb.id}`)).required) await handle('PATCH', `/admin/docs/businesses/${nb.id}/${r.docs[0].id}`, { verified: true });
+  await fails(handle('POST', `/admin/docs/businesses/${nb.id}`, { type: 'bir', file: 'nope' }), /upload the document/);
+  for (const type of ['bir', 'registration', 'permit']) await handle('POST', `/admin/docs/businesses/${nb.id}`, { type, number: 'N-1', file: 'idb:doc1', fileName: type + '.pdf' });
+  await login('owner'); assert.equal((await handle('GET', `/owner/docs/${nb.id}`)).status, 'complete');
+  await login('tourist'); await fails(handle('GET', `/owner/docs/${nb.id}`), /Forbidden/);
+  await login('admin');
   assert.equal((await handle('GET', `/admin/docs/businesses/${nb.id}`)).status, 'complete'); await handle('PATCH', `/admin/businesses/${nb.id}/status`, { status: 'approved' });
   localStorage.removeItem('token'); const pub = (await handle('GET', '/businesses')).find(b => b.name === 'Papers Shop'); assert.equal(pub.papers_status, 'complete'); assert.equal((await handle('GET', `/businesses/${nb.id}`)).papers.required[0].docs[0].file, 'idb:doc1');
   await login('admin'); const rep = await handle('GET', '/admin/business-report?type=shops'); assert.ok(rep.rows.length >= 3 && rep.rows.every(r => r.type === 'Shop')); assert.ok((await handle('GET', '/admin/business-report')).rows.some(r => r.type === 'Transport'));
   assert.equal((await handle('GET', '/admin/business-report?papers=complete')).rows.every(r => r.papers === 'complete'), true);
   await login('provider'); const pd = await handle('GET', '/transport/provider/docs'); assert.equal(pd.status, 'complete');
+  await fails(handle('POST', '/transport/provider/docs', { type: 'bir', file: 'idb:doc1' }), /Forbidden/);
 });
 test('report exports: CSV escaping and a real PDF', async () => {
   const { toCsv, buildPdf } = await import('../src/lib/reports.js');
   const rows = [{ name: 'A, "B" Inn', type: 'Stay', detail: 'inn', municipality: 'Virac', address: 'L1\nL2', phone: '1', owner: 'O', email: 'o@x.t', status: 'approved', registered: '2026-11-09', papers: 'complete', papers_detail: 'BIR: verified' }];
   const csv = toCsv(rows); assert.ok(csv.startsWith('\uFEFFBusiness,Type')); assert.ok(csv.includes('"A, ""B"" Inn"')); assert.ok(csv.includes('"L1\nL2"')); assert.ok(csv.includes('Complete'));
-  const doc = await buildPdf(Array.from({ length: 60 }, (_, i) => ({ ...rows[0], name: 'Biz ' + i })), { title: 'Rabas Kita! registered businesses', filters: { type: 'stays' } });
+  const doc = await buildPdf(Array.from({ length: 60 }, (_, i) => ({ ...rows[0], name: 'Biz ' + i })), { title: 'TRISIKSTI registered businesses', filters: { type: 'stays' } });
   const bytes = new Uint8Array(doc.output('arraybuffer')); assert.equal(String.fromCharCode(...bytes.slice(0, 5)), '%PDF-'); assert.ok(doc.getNumberOfPages() >= 2);
 });
 
@@ -155,4 +158,127 @@ test('QR scanning: a printed code is decoded and turned into a check-in token', 
   const small = render(url, 3); assert.equal(decodeFrame(small.px, small.side, small.side), url);                       // low resolution, like a distant camera frame
   const inv = render(url, 6, [255, 255, 255], [0, 0, 0]); assert.equal(decodeFrame(inv.px, inv.side, inv.side), url);   // inverted colours
   assert.equal(tokenFromScan('demo-1a2b3c4d'), 'demo-1a2b3c4d'); assert.equal(tokenFromScan('https://example.com/other'), null); assert.equal(tokenFromScan('hello world'), null); assert.equal(tokenFromScan(''), null);
+});
+
+test('application form PDF follows the site name and keeps its fillable fields', async () => {
+  const { buildApplicationForm, formFileName } = await import('../src/lib/applicationForm.js');
+  const doc = await buildApplicationForm({ siteName: 'Sample Name', tagline: 'Hi' }, {}), pdf = doc.output();
+  assert.equal(doc.getNumberOfPages(), 2); assert.match(pdf, /Sample Name Business Application Form/); assert.ok(!/TRISIKSTI|RABAS/i.test(pdf));
+  for (const f of ['biz_name', 'doc_8', 'off_recv_sign']) assert.ok(pdf.includes(f), f);
+  assert.equal(formFileName('My Site!'), 'My-Site-Business-Application-Form.pdf'); assert.equal(formFileName(''), 'Business-Application-Form.pdf');
+});
+
+// ---- owner dashboard: one business at a time
+const day = (n) => new Date(Date.now() + n * 864e5).toISOString().slice(0, 10);
+const resetDemo = async () => { await login('admin'); await handle('POST', '/admin/reset'); localStorage.removeItem('token'); };
+const mineOf = async (name) => (await handle('GET', '/owner/businesses')).find(b => b.name.startsWith(name));
+test('owner sees and edits only their own business page', async () => {
+  await resetDemo(); await login('owner');
+  const list = await handle('GET', '/owner/businesses'); assert.equal(list.length, 1); assert.equal(list[0].kind, 'stays');
+  const inn = await handle('GET', `/owner/business/${list[0].id}`); assert.equal(inn.rooms.length, 2); assert.equal(inn.papers.status, 'complete'); assert.match(inn.amenities, /Wi-Fi/); assert.ok(inn.publicPath.startsWith('/accommodations/'));
+  const saved = await handle('PUT', `/owner/business/${inn.id}`, { cover: 'idb:cover1', photos: ['idb:p1', 'idb:p2'], description: 'New text', address: 'Rizal St', phone: '0917', hoursText: 'Daily 24 hours', lat: 13.58, lng: 124.23, type: 'resort', amenities: 'Pool, Wi-Fi, Parking' });
+  assert.equal(saved.cover, 'idb:cover1'); assert.equal(saved.type, 'resort'); assert.equal(saved.name, inn.name);                      // the approved name is not editable
+  const pub = await handle('GET', `/accommodations/${inn.publicPath.split('/').pop()}`);
+  assert.deepEqual(pub.amenities, ['Pool', 'Wi-Fi', 'Parking']); assert.equal(pub.cover_photo, 'idb:cover1'); assert.deepEqual(pub.photos, ['idb:p1', 'idb:p2']); assert.equal(pub.description, 'New text');
+  await fails(handle('PUT', `/owner/business/${inn.id}`, { photos: ['javascript:alert(1)'] }), /not valid/); await fails(handle('PUT', `/owner/business/${inn.id}`, { lat: 120 }), /coordinates/); await fails(handle('PUT', `/owner/business/${inn.id}`, { type: 'castle' }), /stay type/);
+  await login('owner2'); await fails(handle('GET', `/owner/business/${inn.id}`), /not found/); await fails(handle('PUT', `/owner/business/${inn.id}`, { description: 'hijack' }), /not found/); await fails(handle('GET', `/owner/business/${inn.id}/reservations`), /not found/);
+  await login('tourist'); await fails(handle('GET', `/owner/business/${inn.id}`), /Forbidden/);
+});
+test('rooms: add, edit, pause, and protect rooms that have booking history', async () => {
+  await resetDemo(); await login('owner'); const inn = await handle('GET', `/owner/business/${(await mineOf('Seaside')).id}`);
+  const v = await handle('POST', `/owner/business/${inn.id}/rooms`, { name: 'Suite', capacity: 2, pricePerNight: 4000, quantity: 1 }); const suite = v.rooms.find(r => r.name === 'Suite');
+  await fails(handle('POST', `/owner/business/${inn.id}/rooms`, { name: '', capacity: 2, pricePerNight: 10 }), /Check the room/); await fails(handle('POST', `/owner/business/${inn.id}/rooms`, { name: 'X', capacity: 0, pricePerNight: 10 }), /Check the room/);
+  const e = await handle('PUT', `/owner/rooms/${suite.id}`, { name: 'Suite', capacity: 3, pricePerNight: 4200, quantity: 2 }); assert.equal(e.rooms.find(r => r.id === suite.id).price, 4200);
+  const std = v.rooms.find(r => r.name === 'Standard room'); await login('tourist');
+  await handle('POST', '/bookings/stay', { roomId: std.id, checkIn: day(3), checkOut: day(4), guests: 2 });
+  await login('owner'); await fails(handle('DELETE', `/owner/rooms/${std.id}`), /booking history/);
+  const paused = await handle('PUT', `/owner/rooms/${std.id}`, { name: 'Standard room', capacity: 2, pricePerNight: 1500, quantity: 0 }); assert.equal(paused.rooms.find(r => r.id === std.id).quantity, 0);
+  await login('tourist'); const avail = await handle('GET', `/bookings/availability?accommodationId=${inn.publicPath.split('/').pop()}&checkIn=${day(10)}&checkOut=${day(11)}&guests=2`); assert.ok(!avail.some(r => r.id === std.id));   // paused rooms are not offered
+  await login('owner'); const after = await handle('DELETE', `/owner/rooms/${suite.id}`); assert.ok(!after.rooms.some(r => r.id === suite.id));
+  await login('owner2'); await fails(handle('PUT', `/owner/rooms/${std.id}`, { name: 'x', capacity: 1, pricePerNight: 1 }), /Room not found/); await fails(handle('DELETE', `/owner/rooms/${std.id}`), /Room not found/);
+});
+test('stay reservations: the owner is told, manages them, and the guest is told back', async () => {
+  await resetDemo(); await login('owner'); const bid = (await mineOf('Seaside')).id; assert.equal((await handle('GET', '/notifications')).unread, 0);
+  const inn = await handle('GET', `/owner/business/${bid}`), fam = inn.rooms.find(r => r.name === 'Family room'); await login('tourist');
+  const bk = await handle('POST', '/bookings/stay', { roomId: fam.id, checkIn: day(5), checkOut: day(7), guests: 3 });
+  await login('owner'); let n = await handle('GET', '/notifications'); assert.equal(n.unread, 1); assert.match(n.items[0].title, /New booking request at Seaside Inn/); assert.match(n.items[0].body, /Demo Tourist.*Family room.*3 guest/); assert.match(n.items[0].link, /tab=reservations/);
+  let res = await handle('GET', `/owner/business/${bid}/reservations`); assert.equal(res.length, 1); assert.equal(res[0].status, 'pending'); assert.equal(res[0].total, 5000); assert.equal(res[0].email, 'tourist@demo.test'); assert.equal((await handle('GET', `/owner/business/${bid}`)).stats.pending, 1);
+  await fails(handle('PATCH', `/owner/reservations/stay/${bk.booking.id}`, { status: 'completed' }), /cannot be changed/);
+  await handle('POST', '/notifications/read', {}); assert.equal((await handle('GET', '/notifications')).unread, 0);
+  await login('tourist'); await handle('POST', `/payments/${bk.payment.id}/sandbox-confirm`);                                                     // paying tells the owner again
+  await login('owner'); n = await handle('GET', '/notifications'); assert.match(n.items[0].title, /Payment received/); assert.equal(n.unread, 1);
+  assert.equal((await handle('PATCH', `/owner/reservations/stay/${bk.booking.id}`, { status: 'completed' })).status, 'completed'); await fails(handle('PATCH', `/owner/reservations/stay/${bk.booking.id}`, { status: 'confirmed' }), /cannot be changed/);
+  // decline another request, and the room is free for those dates again
+  await login('tourist'); const b2 = await handle('POST', '/bookings/stay', { roomId: fam.id, checkIn: day(9), checkOut: day(10), guests: 2 });
+  await fails(handle('POST', '/bookings/stay', { roomId: fam.id, checkIn: day(9), checkOut: day(10), guests: 2 }), /just taken/);
+  await login('owner'); await handle('PATCH', `/owner/reservations/stay/${b2.booking.id}`, { status: 'declined' });
+  await login('tourist'); const g = await handle('GET', '/notifications'); assert.match(g.items[0].title, /Your booking at Seaside Inn \(sample\) was declined/); assert.equal(g.items[0].link, '/bookings'); assert.equal((await handle('GET', '/bookings/mine')).stays.find(s => s.id === b2.booking.id).status, 'declined');
+  await handle('POST', '/bookings/stay', { roomId: fam.id, checkIn: day(9), checkOut: day(10), guests: 2 });
+  await handle('POST', '/notifications/read', {}); assert.equal((await handle('GET', '/notifications')).unread, 0);
+  await login('owner2'); await fails(handle('PATCH', `/owner/reservations/stay/${b2.booking.id}`, { status: 'confirmed' }), /not found/); assert.equal((await handle('GET', '/notifications')).items.length, 0);   // other owners see nothing
+  await login('owner'); await fails(handle('PATCH', '/owner/reservations/constructor/x', { status: 'confirmed' }), /Unknown reservation type/);
+});
+test('restaurants: menu management, table reservations and their alerts', async () => {
+  await resetDemo(); await login('owner3'); const list = await handle('GET', '/owner/businesses'); assert.equal(list.length, 2);
+  const grill = list.find(b => b.name.startsWith('Seafood')), cafe = list.find(b => b.name.startsWith('Island Cafe')); assert.equal(grill.kind, 'restaurants');
+  let g = await handle('GET', `/owner/business/${grill.id}`); assert.equal(g.acceptsReservations, false); assert.equal(g.menu.length, 3);
+  g = await handle('POST', `/owner/business/${grill.id}/menu`, { name: 'Kinilaw', price: 220, description: 'Fresh' }); const dish = g.menu.find(m => m.name === 'Kinilaw');
+  g = await handle('PUT', `/owner/menu-items/${dish.id}`, { name: 'Kinilaw', price: 250, description: 'Fresh' }); assert.equal(g.menu.find(m => m.id === dish.id).price, 250);
+  await fails(handle('POST', `/owner/business/${grill.id}/menu`, { name: 'Free?', price: '' }), /dish name and price/);
+  assert.equal((await handle('DELETE', `/owner/menu-items/${dish.id}`)).menu.length, 3); await fails(handle('POST', `/owner/business/${grill.id}/rooms`, { name: 'R', capacity: 1, pricePerNight: 1 }), /Rooms are for/);
+  await login('tourist'); const grillId = (await handle('GET', '/restaurants')).find(r => r.name.startsWith('Seafood')).restaurant_id; const at = new Date(Date.now() + 2 * 864e5).toISOString();
+  await fails(handle('POST', '/bookings/reservation', { restaurantId: grillId, reservedAt: at, partySize: 2 }), /does not take reservations/);   // off until the owner turns it on
+  await login('owner3'); const on = await handle('PUT', `/owner/business/${grill.id}`, { description: g.description, cuisines: 'Seafood, Filipino', priceRange: 3, acceptsReservations: true }); assert.equal(on.acceptsReservations, true); assert.equal(on.priceRange, 3);
+  await fails(handle('PUT', `/owner/business/${grill.id}`, { priceRange: 9 }), /price level/);
+  await login('tourist'); await fails(handle('POST', '/bookings/reservation', { restaurantId: grillId, reservedAt: at, partySize: 0 }), /how many people/); await handle('POST', '/bookings/reservation', { restaurantId: grillId, reservedAt: at, partySize: 4 });
+  await login('owner3'); const n = await handle('GET', '/notifications'); assert.match(n.items[0].title, /New table reservation at Seafood Grill/); assert.match(n.items[0].body, /party of 4/);
+  const rs = await handle('GET', `/owner/business/${grill.id}/reservations`); assert.equal(rs.length, 1); assert.equal(rs[0].kind, 'table');
+  await handle('PATCH', `/owner/reservations/table/${rs[0].id}`, { status: 'confirmed' }); await handle('PATCH', `/owner/reservations/table/${rs[0].id}`, { status: 'no_show' });
+  await login('tourist'); const t = await handle('GET', '/notifications'); assert.match(t.items[0].title, /Your table reservation at Seafood Grill \(sample\) was confirmed/); assert.equal(t.items.length, 1);   // a no-show sends nothing
+  await login('owner'); await fails(handle('GET', `/owner/business/${cafe.id}`), /not found/);
+});
+test('shops list products, and tourists see them', async () => {
+  await resetDemo(); await login('owner4'); const souv = await mineOf('Island Souvenirs'); let v = await handle('GET', `/owner/business/${souv.id}`); assert.equal(v.kind, 'shops'); assert.equal(v.products.length, 3);
+  v = await handle('POST', `/owner/business/${souv.id}/products`, { name: 'Shell necklace', price: 150, description: 'Sample', photo: 'idb:prod1' }); const prod = v.products.find(x => x.name === 'Shell necklace');
+  await fails(handle('POST', `/owner/business/${souv.id}/products`, { name: 'Bad', price: 1, photo: 'javascript:x' }), /not valid/); await fails(handle('POST', `/owner/business/${souv.id}/products`, { name: '', price: 1 }), /product name/);
+  v = await handle('PUT', `/owner/products/${prod.id}`, { name: 'Shell necklace', price: 175, description: 'Sample', photo: 'idb:prod1' }); assert.equal(v.products.find(x => x.id === prod.id).price, 175);
+  const pub = await handle('GET', `/businesses/${souv.id}`); assert.equal(pub.products.length, 4); assert.equal(pub.products.find(x => x.id === prod.id).photo, 'idb:prod1');
+  await login('owner2'); await fails(handle('PUT', `/owner/products/${prod.id}`, { name: 'x', price: 1 }), /Product not found/); await login('owner4'); assert.equal((await handle('DELETE', `/owner/products/${prod.id}`)).products.length, 3);
+  await fails(handle('POST', `/owner/business/${souv.id}/menu`, { name: 'x', price: 1 }), /restaurants and cafes/);
+});
+test('a newly registered hotel or restaurant gets the right papers list and tools straight away', async () => {
+  await resetDemo(); await login('owner'); const nb = await handle('POST', '/businesses', { name: 'Hilltop Lodge', municipalityId: 1, category: 'Hotels and resorts' });
+  const v = await handle('GET', `/owner/business/${nb.id}`); assert.equal(v.kind, 'stays'); assert.equal(v.status, 'pending'); assert.equal(v.publicPath, null); assert.equal(v.papers.need, 4); assert.deepEqual(v.rooms, []);
+  const cafe = await handle('POST', '/businesses', { name: 'Hill Cafe', municipalityId: 1, category: 'Cafes' }); assert.equal((await handle('GET', `/owner/business/${cafe.id}`)).papers.need, 5);
+  await handle('POST', `/owner/business/${nb.id}/rooms`, { name: 'Twin', capacity: 2, pricePerNight: 900, quantity: 3 }); assert.equal((await handle('GET', `/owner/business/${nb.id}`)).rooms.length, 1);
+});
+test('old saved data without the new lists still loads', async () => {
+  const { createBackend, seed } = await import('../src/lib/backend.js'); const old = seed(); delete old.products; delete old.notifications; let saved = null;
+  let tok = ''; const be = createBackend({ token: () => tok, load: async () => structuredClone(old), save: async d => { saved = d; } });
+  tok = (await be.handle('POST', '/auth/login', { email: 'owner@demo.test', password: 'demo1234' })).token; await be.handle('POST', '/notifications/read', {}); assert.deepEqual(saved.products, []); assert.deepEqual(saved.notifications, []);
+});
+test('emails go out only when the host supplies a mailer, and never block the booking', async () => {
+  const { createBackend, seed } = await import('../src/lib/backend.js'); let db = seed(), tok = ''; const sent = [];
+  const mk = (email) => createBackend({ token: () => tok, load: async () => structuredClone(db), save: async d => { db = structuredClone(d); }, email, siteUrl: () => 'https://site.test' });
+  const as = async (be, who) => { tok = (await be.handle('POST', '/auth/login', { email: who + '@demo.test', password: 'demo1234' })).token; };
+  let off = 0; const book = async (be) => { await as(be, 'tourist'); const fam = db.rooms.find(r => r.name === 'Family room'); off += 2; return be.handle('POST', '/bookings/stay', { roomId: fam.id, checkIn: day(off), checkOut: day(off + 1), guests: 2 }); };
+  await book(mk(undefined)); assert.equal(sent.length, 0);                                                                              // no mailer: in-site alert only
+  assert.equal(db.notifications.length, 1);
+  const be = mk(async (m) => { sent.push(m); }); const bk = await book(be); assert.equal(sent.length, 1);
+  assert.equal(sent[0].to, 'owner@demo.test'); assert.match(sent[0].subject, /New booking request at Seaside Inn/); assert.match(sent[0].text, /Open: https:\/\/site\.test\/dashboard\?b=/);
+  await as(be, 'owner'); await be.handle('PATCH', `/owner/reservations/stay/${bk.booking.id}`, { status: 'confirmed' }); assert.equal(sent.length, 2); assert.equal(sent[1].to, 'tourist@demo.test'); assert.match(sent[1].subject, /was confirmed/);
+  const broken = mk(async () => { throw new Error('mail server down'); }); const ok = await book(broken); assert.ok(ok.booking.id);              // a failing mailer does not fail the booking
+});
+
+test('transport provider edits their page, album and vehicles', async () => {
+  await login('provider'); const me = await handle('GET', '/transport/provider/me'); assert.equal(me.page.kind, 'transport');
+  const pg = await handle('PUT', '/transport/provider/page', { cover: 'idb:c1', photos: ['idb:a1', 'idb:a2'], description: 'Island rides', address: 'Virac', phone: '0917', hoursText: 'Daily 6:00 to 20:00' });
+  assert.equal(pg.cover, 'idb:c1'); assert.deepEqual(pg.photos, ['idb:a1', 'idb:a2']);
+  await fails(handle('PUT', '/transport/provider/page', { cover: 'javascript:x', photos: [] }), /not valid/);
+  const id = (await handle('POST', '/transport/vehicles', { name: 'Test Van', type: 'van', capacity: 8, rentDriver: 2000, cover: 'idb:v1', photos: ['idb:v2'] })).id;
+  await handle('PUT', `/transport/vehicles/${id}`, { name: 'Test Van', type: 'van', capacity: 9, rentDriver: 2500, rentSelf: '', cover: 'idb:v1', photos: [], isAvailable: false });
+  let v = (await handle('GET', '/transport/provider/me')).vehicles.find(x => x.id === id); assert.equal(v.capacity, 9); assert.equal(v.is_available, false); assert.equal(v.rent_self, null);
+  localStorage.removeItem('token'); const pub = await handle('GET', '/rentals/vehicles'); assert.ok(!pub.some(x => x.id === id));
+  await login('provider'); await handle('DELETE', `/transport/vehicles/${id}`); assert.ok(!(await handle('GET', '/transport/provider/me')).vehicles.some(x => x.id === id));
+  await login('owner'); await fails(handle('PUT', '/transport/provider/page', {}), /Forbidden/);
 });

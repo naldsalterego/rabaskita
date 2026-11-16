@@ -2,6 +2,12 @@
 import { createBackend } from '../../client/src/lib/backend.js';
 const json = (obj, status = 200) => new Response(JSON.stringify(obj), { status, headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' } });
 const statusFor = (m) => (/Sign in|Wrong email or password/.test(m) ? 401 : /Forbidden/.test(m) ? 403 : /Not found/.test(m) ? 404 : 400);
+// Optional email alerts (bookings, reservations). Off unless RESEND_API_KEY and NOTIFY_FROM are set in Netlify. Demo accounts (@demo.test) never get mail.
+export const makeMailer = (env) => (env.RESEND_API_KEY && env.NOTIFY_FROM ? async ({ to, subject, text }) => {
+  if (/@demo\.test$/i.test(to)) return;
+  const r = await fetch('https://api.resend.com/emails', { method: 'POST', headers: { Authorization: 'Bearer ' + env.RESEND_API_KEY, 'Content-Type': 'application/json' }, body: JSON.stringify({ from: env.NOTIFY_FROM, to: [to], subject, text }) });
+  if (!r.ok) console.error('Email could not be sent:', r.status);
+} : undefined);
 export function makeHandler(getStore, env = {}) {
   return async (req) => {
     const url = new URL(req.url), path = url.pathname.replace(/^\/(\.netlify\/functions\/api|api)/, '') || '/';
@@ -15,12 +21,14 @@ export function makeHandler(getStore, env = {}) {
       load: () => store.get('db', { type: 'json' }),
       save: async (d) => { const prev = Number(await store.get('rev')) || 0; d.rev = Math.max(Date.now(), prev + 1, (d.rev || 0) + 1); await Promise.all([store.setJSON('db', d), store.set('rev', String(d.rev))]); },
       adminPassword: () => env.ADMIN_PASSWORD || 'demo1234',
+      email: makeMailer(env), siteUrl: () => url.origin,
       deletePhoto: async (ref) => { const m = String(ref).match(/\/api\/photos\/([\w-]+(?:\.(?:png|pdf))?)$/); if (m) await store.delete('photo/' + m[1]); },
       wipePhotos: async () => { const { blobs } = await store.list({ prefix: 'photo/' }); await Promise.all(blobs.map(b => store.delete(b.key))); },
     });
     try {
       if (path === '/photos' && req.method === 'POST') {
         const user = await be.whoami(); if (!user || !['admin', 'business_owner', 'transport_provider'].includes(user.role)) return json({ error: user ? 'Forbidden' : 'Sign in required' }, user ? 403 : 401);
+        if (/pdf/.test(req.headers.get('content-type') || '') && user.role !== 'admin') return json({ error: 'Forbidden. Only the tourism office can upload papers.' }, 403);
         const buf = await req.arrayBuffer(); if (!buf.byteLength) return json({ error: 'Empty image' }, 400); if (buf.byteLength > 5.5e6) return json({ error: 'Image is too large' }, 413);
         const id = crypto.randomUUID() + (/png/.test(req.headers.get('content-type') || '') ? '.png' : /pdf/.test(req.headers.get('content-type') || '') ? '.pdf' : ''); await store.set('photo/' + id, buf); return json({ url: '/api/photos/' + id });
       }
