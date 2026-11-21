@@ -282,3 +282,22 @@ test('transport provider edits their page, album and vehicles', async () => {
   await login('provider'); await handle('DELETE', `/transport/vehicles/${id}`); assert.ok(!(await handle('GET', '/transport/provider/me')).vehicles.some(x => x.id === id));
   await login('owner'); await fails(handle('PUT', '/transport/provider/page', {}), /Forbidden/);
 });
+test('audit log: newest first, more than 100 entries are returned, and storage keeps at most 2000', async () => {
+  await login('admin'); const t = (await handle('GET', '/admin/users')).find(u => u.role === 'tourist');
+  for (let i = 0; i < 110; i++) await handle('PATCH', `/admin/users/${t.id}/active`, { active: true });
+  const a = await handle('GET', '/admin/audit'); assert.ok(a.length > 100 && a.length <= 1000);
+  assert.ok(a.every((x, i) => i === 0 || new Date(a[i - 1].created_at) >= new Date(x.created_at)));
+  await login('tourist'); await fails(handle('GET', '/admin/audit'), /Forbidden/);
+});
+
+test('only an admin can create an admin account; public sign-up refuses the admin role', async () => {
+  await login('tourist');
+  await fails(handle('POST', '/admin/users', { fullName: 'Sneaky', email: 'sneaky@x.test', password: 'password123' }), /Forbidden/);
+  await fails(handle('POST', '/auth/register', { fullName: 'Sneaky', email: 'sneaky@x.test', password: 'password123', role: 'admin' }), /Check your details/);
+  await login('admin');
+  await fails(handle('POST', '/admin/users', { fullName: 'A', email: 'bad', password: 'short' }), /valid email/);
+  const a = await handle('POST', '/admin/users', { fullName: 'New Admin', email: 'NewAdmin@x.test', password: 'password123' });
+  assert.equal(a.role, 'admin');
+  await fails(handle('POST', '/admin/users', { fullName: 'Dup', email: 'newadmin@x.test', password: 'password123' }), /already registered/);
+  const r = await handle('POST', '/auth/login', { email: 'newadmin@x.test', password: 'password123' }); assert.equal(r.user.role, 'admin');
+});

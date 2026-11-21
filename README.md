@@ -69,6 +69,9 @@ Sign in as a business owner and open the dashboard. It shows one business at a t
 A new hotel or restaurant gets the right papers list and tools from the moment it is registered.
 These features, like the alerts below, run in the shared Netlify / in-browser backend; the Express server in `server/` does not have them. Existing saved data keeps working: the new lists (products, alerts) are added automatically the next time data loads, and nothing already stored is changed.
 
+## Loading screen
+A ~2.5 second adventure intro (sun rising, mountains, a sailing bangka, gulls, a route drawing itself to a map pin, then the 360 Catanduanes logo bursts in with "Adventure awaits!"; made of CSS and SVG, with the logo (`client/public/logo-360.png`)) shows every time the landing page `/` is opened or reloaded. Other pages skip it. When it ends, a golden circle opens on the green "0" of the logo and zooms out (about 2 seconds) until the landing page fills the screen. It stays until the page is really ready (the app is drawn, fonts, data requests and the pictures on screen have loaded, at least 2.5 seconds, with a 20 second safety limit); bouncing dots show if it is still waiting. It is plain HTML and CSS in `client/index.html`, so it appears before the app loads and respects "reduce motion".
+
 ## Transport provider dashboard
 Providers get the same layout as business owners, with tabs: **Overview** (stats, "page is X% complete" checklist, preview card), **My page** (cover photo, photo album, description, phone, hours, address), **Vehicles** (add, edit, pause, delete; each vehicle has its own cover photo and album), **Routes and fares**, **Requests** (rentals and airport/port rides) and **Papers** (read-only). The cover, album and description show on the vehicle pages tourists see. These run in the shared Netlify / in-browser backend, not the Express server.
 
@@ -84,3 +87,6 @@ Emails are optional and only work on the shared Netlify version (a browser-only 
 
 ## QR scanning
 `/scan` opens the phone or laptop camera (needs https or localhost and camera permission) and reads the QR code of a place, then checks the visitor in. Fallbacks: upload a photo of the QR, or type the code. Print the codes from Admin > QR codes > "Print QR sheet" and stick one at each place. A QR scanned with the phone's own camera app also works: it opens `/checkin/<code>`.
+
+## Audit log
+Admin > Audit log groups actions by day (newest first). The two latest days are open and older days are collapsed; click a day to open or close it, use Expand all / Collapse all, pick a date, or search by admin or action. The latest 1000 actions are listed and the latest 2000 are kept.

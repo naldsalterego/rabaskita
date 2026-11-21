@@ -48,7 +48,7 @@ export function createBackend(io) {
   const tierPts = (id) => db.tiers.find(t => t.id == id)?.points ?? null;
   const biz = (id) => db.businesses.find(b => b.id === id);
   const balance = (uid_) => db.points.filter(p => p.user_id === uid_).reduce((s, p) => s + p.delta, 0);
-  const log = (user, action, entity_id = '') => db.audit.unshift({ created_at: now(), actor: user?.email, action, entity_id });
+  const log = (user, action, entity_id = '') => { db.audit.unshift({ created_at: now(), actor: user?.email, action, entity_id }); if (db.audit.length > 2000) db.audit.length = 2000; }; // newest first; keep the latest 2000 so the saved data stays small
   const dest = (x) => ({ ...x, municipality: mn(x.municipality_id), points: tierPts(x.point_tier_id) });
   // ---- business papers (documents). The tourism office decides which papers are required; adjust REQUIRED to match its rules.
   const DOC_LABELS = { bir: 'BIR Certificate of Registration (Form 2303)', registration: 'Business registration (DTI / SEC / CDA)', permit: "Mayor's / business permit", sanitary: 'Sanitary permit', fire: 'Fire safety inspection certificate', franchise: 'Transport franchise or permit, and vehicle registration (OR/CR)', dot: 'DOT accreditation (if any)', other: 'Other supporting document' };
@@ -216,10 +216,17 @@ export function createBackend(io) {
   R('POST', '/admin/qr', ({ b }) => { const key = String(b.listingId || '').toLowerCase(); const lists = { destination: db.destinations, business: db.businesses, accommodation: db.accommodations, restaurant: db.restaurants }; const l = lists[b.listingType]?.find(x => x.id === b.listingId || x.name?.toLowerCase() === key); need(l, 'Listing not found'); db.qr.push({ id: uid(), listing_type: b.listingType, listing_id: l.id, token: 'demo-' + rnd(8).toLowerCase(), points_override: b.pointsOverride ?? null, cooldown_hours: b.cooldownHours || 24, is_active: true }); }, ['admin']);
   R('PATCH', '/admin/qr/:id/deactivate', ({ p, user }) => { db.qr.find(q => q.id === p[0]).is_active = false; log(user, 'qr.deactivate', p[0]); }, ['admin']);
   R('GET', '/admin/users', () => db.users.slice().reverse(), ['admin']);
+  // Only a signed-in admin can create another admin. Public sign-up (/auth/register) still refuses the admin role.
+  R('POST', '/admin/users', ({ b, user }) => {
+    need(/^\S+@\S+$/.test(b.email || '') && (b.password || '').length >= 8 && (b.fullName || '').trim().length >= 2, 'Enter a full name, a valid email and a password of at least 8 characters');
+    need(!db.users.some(x => x.email === b.email.toLowerCase()), 'Email already registered');
+    const x = { id: uid(), email: b.email.toLowerCase(), password: b.password, full_name: b.fullName.trim(), role: 'admin', is_active: true, created_at: now() }; db.users.push(x);
+    log(user, 'admin.create', x.id); return { id: x.id, email: x.email, full_name: x.full_name, role: x.role, is_active: true };
+  }, ['admin']);
   R('PATCH', '/admin/users/:id/active', ({ p, b, user }) => { need(p[0] !== user.id, 'You cannot deactivate your own account'); db.users.find(u => u.id === p[0]).is_active = !!b.active; log(user, 'user.active', p[0]); }, ['admin']);
   R('GET', '/admin/reports', () => { const pays = Object.values(db.payments.reduce((m, p) => { (m[p.status] ||= { status: p.status, n: 0, total: 0 }); m[p.status].n++; m[p.status].total += p.amount; return m; }, {})); const top = Object.values(db.checkins.reduce((m, c) => { const q = db.qr.find(x => x.id === c.qr_id); if (q?.listing_type === 'destination') { const n = qrName(q); (m[n] ||= { name: n, visits: 0 }).visits++; } return m; }, {})).sort((a, b) => b.visits - a.visits);
     return { checkinsByMonth: monthly(db.checkins.map(c => c.created_at)), bookingsByMonth: monthly([...db.stays, ...db.rides, ...db.rentals].map(x => x.created_at)), topDestinations: top, payments: pays }; }, ['admin']);
-  R('GET', '/admin/audit', () => db.audit.slice(0, 100), ['admin']);
+  R('GET', '/admin/audit', () => db.audit.slice(0, 1000), ['admin']);
   // ---- itineraries
   const view = (it) => { const items = it.items.slice().sort((a, b) => a.day_no - b.day_no || a.position - b.position).map(i => { let name = i.title, l = null;
     if (i.listing_type === 'destination') l = db.destinations.find(x => x.id === i.listing_id); else if (i.listing_type === 'restaurant') l = biz(db.restaurants.find(x => x.id === i.listing_id)?.business_id); else if (i.listing_type === 'accommodation') l = biz(db.accommodations.find(x => x.id === i.listing_id)?.business_id); else if (i.listing_type === 'business') l = biz(i.listing_id);

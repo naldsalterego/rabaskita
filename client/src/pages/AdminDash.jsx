@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Palette, LayoutDashboard, BadgeCheck, MapPinned, BedDouble, Utensils, Bus, Store, Gift, QrCode, BarChart3, Users, ScrollText, Plus, Pencil, Trash2, UserRound, Coins, Compass, Clock, Trophy } from 'lucide-react';
+import { ChevronDown, ChevronRight, Palette, LayoutDashboard, BadgeCheck, MapPinned, BedDouble, Utensils, Bus, Store, Gift, QrCode, BarChart3, Users, ScrollText, Plus, Pencil, Trash2, UserRound, Coins, Compass, Clock, Trophy } from 'lucide-react';
 import { api, openQr, isDemo, resetAll, printQrSheet } from '../lib/api.js';
 import { mode } from '../lib/mode.js';
 import Cover from '../components/Cover.jsx';
@@ -42,7 +42,7 @@ function Manage({ kind, cfg, head }) {
     <div className="mb-4 flex flex-wrap items-center justify-between gap-3"><div><h2 className="font-display text-3xl">{cfg.title}</h2><p className="text-sm text-ocean/65">{rows ? `${rows.length} listed` : 'Loading…'}</p></div><button className={`${btn} inline-flex items-center gap-2`} onClick={() => { setNote(''); setEdit('new'); }}><Plus size={16} />Add {cfg.noun}</button></div>
     {head}{note && <p role="status" className="mb-4 rounded-xl bg-teal/10 p-3 text-sm">{note}</p>}{err && <p role="alert" className="mb-4 text-red-700">{err}</p>}
     {rows && rows.length === 0 ? <Empty Icon={cfg.Icon}>Nothing here yet. Add your first {cfg.noun}.</Empty> : <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">{(rows || []).map(r => <article key={r.id} className="lift overflow-hidden rounded-3xl border border-line bg-white">
-      <Cover name={r.title} className="h-24"><span className="absolute right-3 top-3"><Badge s={r.status} /></span></Cover>
+      <Cover name={r.title} photo={r.cover} className="h-32"><span className="absolute right-3 top-3"><Badge s={r.status} /></span></Cover>
       <div className="p-4"><h3 className="font-display text-lg leading-tight">{r.title}</h3><p className="mt-1 text-sm text-ocean/65">{r.sub}</p>{cfg.docs && <PaperLine p={r.papers} />}<div className="mt-3 flex gap-2"><button className={`${btnGhost} inline-flex items-center gap-1`} onClick={() => { setNote(''); setEdit(r); }}><Pencil size={14} />Edit</button><button className={`${btnGhost} inline-flex items-center gap-1 text-red-700`} onClick={() => remove(r)}><Trash2 size={14} />Delete</button></div></div></article>)}</div>}
     <Drawer open={!!edit} onClose={() => setEdit(null)} title={edit === 'new' ? `Add ${cfg.noun}` : `Edit ${cfg.noun}`}>
       <EntityForm key={cur?.id || 'new'} fields={cfg.fields} initial={initial} onSubmit={save} label={edit === 'new' ? `Add ${cfg.noun}` : 'Save changes'} />
@@ -63,7 +63,7 @@ export default function AdminDash() {
   const run = async (fn, after) => { try { await fn(); setMsg('Saved.'); after?.(); rs(); } catch (e) { setMsg(e.message); return false; } };
   const pending = (biz?.length || 0) + (prov?.length || 0); const cfg = munis && tiers ? CONFIG(munis, tiers) : null;
   return (<main className="mx-auto max-w-7xl px-4 py-6">
-    <PageHeader title="Tourism office" sub="Add, edit and remove everything tourists see, and manage approvals, rewards and reports.">{isDemo && (mode.shared ? <span className="rounded-full bg-white/15 px-4 py-2 text-sm">● Storage: shared across all devices</span> : <span className="max-w-xs rounded-2xl bg-amber-300 px-4 py-2 text-sm text-ocean">● Storage: this browser only. Other devices will not see your changes.</span>)}</PageHeader>
+    <PageHeader title="Tourism office" sub="Add, edit and remove everything tourists see, and manage approvals, rewards and reports." />
     <div className="mt-5 grid gap-5 lg:grid-cols-[14rem_1fr]">
       <nav aria-label="Admin sections" className="flex gap-1 overflow-x-auto rounded-3xl border border-line bg-white p-2 lg:sticky lg:top-24 lg:grid lg:self-start">{TABS.map(([id, label, Icon]) => <button key={id} onClick={() => { setTab(id); setMsg(''); }} className={`flex shrink-0 items-center gap-3 whitespace-nowrap rounded-2xl px-3 py-2 text-left text-sm ${tab === id ? 'bg-ocean text-foam' : 'hover:bg-sand/50'}`}><Icon size={17} />{label}{id === 'approvals' && pending > 0 && <span className="ml-auto rounded-full bg-tang px-2 text-xs text-white">{pending}</span>}</button>)}</nav>
       <div className="min-w-0">{msg && <p role="status" className="mb-4 rounded-xl bg-teal/10 p-3 text-sm">{msg}</p>}
@@ -82,8 +82,8 @@ export default function AdminDash() {
         {tab === 'reports' && <><RegistryReport /><FormCard /></>}
         {tab === 'reports' && rep && <div className="grid gap-5 md:grid-cols-2"><Card title="Check-ins per month"><Bars data={rep.checkinsByMonth.map(m => ({ label: m.month, value: m.n }))} /></Card><Card title="Bookings per month"><Bars data={rep.bookingsByMonth.map(m => ({ label: m.month, value: m.n }))} /></Card><Card title="Most visited destinations"><Bars data={rep.topDestinations.map(m => ({ label: m.name, value: m.visits }))} /></Card>
           <Card title="Payments (sandbox)">{rep.payments.length === 0 ? <p className="text-sm text-ocean/60">No payments yet.</p> : rep.payments.map(p => <p key={p.status} className="flex justify-between border-b border-line py-2 text-sm"><Badge s={p.status} /> <span>{p.n} payment(s) · ₱{p.total.toLocaleString()}</span></p>)}</Card></div>}
-        {tab === 'users' && <Card title="Users">{(users || []).map(u => <div key={u.id} className="flex flex-wrap items-center justify-between gap-2 border-b border-line py-2 text-sm"><span><b>{u.full_name}</b> · {u.email}</span><span className="flex items-center gap-3"><Badge s={u.is_active ? 'approved' : 'suspended'}>{u.role.replace('_', ' ')}{u.is_active ? '' : ' · inactive'}</Badge><button className="underline" onClick={() => run(() => api(`/admin/users/${u.id}/active`, { method: 'PATCH', body: { active: !u.is_active } }), ru)}>{u.is_active ? 'Deactivate' : 'Reactivate'}</button></span></div>)}</Card>}
-        {tab === 'audit' && <Card title="Audit log">{(audit || []).length === 0 && <p className="text-sm text-ocean/60">No admin actions yet.</p>}{(audit || []).map((a, i) => <p key={i} className="border-b border-line py-1.5 text-sm"><span className="text-ocean/55">{new Date(a.created_at).toLocaleString()}</span> · {a.actor} · <b>{a.action}</b></p>)}</Card>}
+        {tab === 'users' && <UsersPanel users={users} run={run} reload={ru} />}
+        {tab === 'audit' && <AuditLog audit={audit} />}
       </div></div></main>);
 }
 
@@ -127,9 +127,64 @@ function RegistryReport() {
       <label className="grid gap-1 text-xs font-medium text-ocean/70">Papers<select className={sel} value={f.papers} onChange={e => setF({ ...f, papers: e.target.value })}>{Opt([['all', 'Any'], ['complete', 'Complete'], ['review', 'Under review'], ['incomplete', 'Incomplete']])}</select></label>
       <button disabled={!rows.length} className={`${btn} disabled:opacity-40`} onClick={() => downloadCsv(rows, `${base}.csv`)}>Download CSV (Excel)</button><button disabled={!rows.length || busy} className={`${btn} disabled:opacity-40`} onClick={pdf}>{busy ? 'Making PDF…' : 'Download PDF'}</button></div>
     <p className="mt-3 text-sm font-medium">{data ? `${rows.length} business${rows.length === 1 ? '' : 'es'} match` : 'Loading…'}</p>
-    {rows.length > 0 && <div className="mt-2 overflow-x-auto rounded-2xl border border-line"><table className="w-full min-w-[34rem] text-left text-sm"><thead className="bg-foam text-xs uppercase text-ocean/60"><tr><th className="p-2">Business</th><th className="p-2">Type</th><th className="p-2">Status</th><th className="p-2">Papers</th></tr></thead><tbody>{rows.slice(0, 8).map(r => <tr key={r.id} className="border-t border-line"><td className="p-2">{r.name}</td><td className="p-2">{r.type}</td><td className="p-2"><Badge s={r.status} /></td><td className="p-2">{PAPER_LABEL[r.papers]}</td></tr>)}</tbody></table>{rows.length > 8 && <p className="p-2 text-xs text-ocean/60">Showing 8 of {rows.length}. The download has all of them.</p>}</div>}</Card>);
+    {rows.length > 0 && <div className="mt-2 max-h-[18rem] overflow-auto rounded-2xl border border-line"><table className="w-full min-w-[34rem] text-left text-sm"><thead className="sticky top-0 z-10 bg-foam text-xs uppercase text-ocean/60"><tr><th className="p-2">Business</th><th className="p-2">Type</th><th className="p-2">Status</th><th className="p-2">Papers</th></tr></thead><tbody>{rows.map(r => <tr key={r.id} className="border-t border-line"><td className="p-2">{r.name}</td><td className="p-2">{r.type}</td><td className="p-2"><Badge s={r.status} /></td><td className="p-2">{PAPER_LABEL[r.papers]}</td></tr>)}</tbody></table></div>}</Card>);
 }
 function FormCard() {
   const F = '/forms/TRISIKSTI-Business-Application-Form';
   return (<Card title="Business application form"><p className="mb-3 text-sm text-ocean/70">Give this form to businesses that want to be listed. It is also on the public <a className="underline" href="/join">Join page</a>, which explains the steps and required papers.</p><div className="flex flex-wrap gap-3"><FormPdfButton className={btn}>Download PDF (fillable)</FormPdfButton><a className={btnGhost} href={`${F}.docx`} download>Download Word (.docx)</a></div></Card>);
+}
+
+// Audit log grouped by day: newest days first, the two latest days open, older days collapsed. Filter by date or text.
+const dayKey = (iso) => new Date(iso).toLocaleDateString('en-CA');
+const dayLabel = (key) => {
+  const t = dayKey(Date.now()), y = dayKey(Date.now() - 864e5), nice = new Date(key + 'T12:00:00').toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' });
+  return key === t ? 'Today · ' + nice : key === y ? 'Yesterday · ' + nice : nice;
+};
+function AuditLog({ audit }) {
+  const [day, setDay] = useState(''), [q, setQ] = useState(''), [open, setOpen] = useState({});
+  const term = q.trim().toLowerCase(), filtering = !!day || !!term;
+  const rows = [...(audit || [])].sort((a, b) => new Date(b.created_at) - new Date(a.created_at)).filter(a => (!day || dayKey(a.created_at) === day) && (!term || `${a.actor} ${a.action} ${a.entity_id || ''}`.toLowerCase().includes(term)));
+  const groups = []; rows.forEach(a => { const k = dayKey(a.created_at), g = groups[groups.length - 1]; if (g && g.key === k) g.items.push(a); else groups.push({ key: k, items: [a] }); });
+  const isOpen = (g, i) => open[g.key] ?? (filtering || i < 2);
+  const setAll = (v) => setOpen(Object.fromEntries(groups.map(g => [g.key, v])));
+  return (
+    <Card title="Audit log" action={groups.length > 1 && <span className="flex gap-2"><button className={btnGhost} onClick={() => setAll(true)}>Expand all</button><button className={btnGhost} onClick={() => setAll(false)}>Collapse all</button></span>}>
+      <div className="mb-4 flex flex-wrap items-end gap-3">
+        <label className="text-xs text-ocean/60">Date<input type="date" max={dayKey(Date.now())} value={day} onChange={e => setDay(e.target.value)} className={inp + ' mt-1 block'} /></label>
+        <label className="min-w-[12rem] flex-1 text-xs text-ocean/60">Search<input value={q} onChange={e => setQ(e.target.value)} placeholder="Action or admin, e.g. stays.create" className={inp + ' mt-1 block w-full'} /></label>
+        {filtering && <button className={btnGhost} onClick={() => { setDay(''); setQ(''); }}>Clear filters</button>}
+      </div>
+      {(audit || []).length === 0 && <p className="text-sm text-ocean/60">No admin actions yet.</p>}
+      {(audit || []).length > 0 && groups.length === 0 && <p className="text-sm text-ocean/60">No actions match these filters.</p>}
+      {groups.map((g, i) => (
+        <section key={g.key} className="mb-2 overflow-hidden rounded-2xl border border-line">
+          <button type="button" aria-expanded={isOpen(g, i)} onClick={() => setOpen(o => ({ ...o, [g.key]: !isOpen(g, i) }))} className="flex w-full items-center justify-between gap-3 bg-foam px-4 py-2.5 text-left">
+            <span className="flex items-center gap-2 font-semibold text-ocean">{isOpen(g, i) ? <ChevronDown size={16} /> : <ChevronRight size={16} />}{dayLabel(g.key)}</span>
+            <span className="rounded-full bg-white px-2.5 py-0.5 text-xs text-ocean/70">{g.items.length} action{g.items.length === 1 ? '' : 's'}</span>
+          </button>
+          {isOpen(g, i) && <div className="px-4 pb-1">{g.items.map((a, j) => <p key={j} className="border-b border-line py-1.5 text-sm last:border-0"><span className="inline-block w-24 text-ocean/55">{new Date(a.created_at).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit', second: '2-digit' })}</span> · {a.actor} · <b>{a.action}</b></p>)}</div>}
+        </section>
+      ))}
+    </Card>
+  );
+}
+
+// Users split by account type so the admin does not scroll one long mixed list.
+const ROLE_GROUPS = [['tourist', 'Tourists'], ['business_owner', 'Business owners'], ['transport_provider', 'Transport providers'], ['admin', 'Admins']];
+function UsersPanel({ users, run, reload }) {
+  const [open, setOpen] = useState({}), [note, setNote] = useState('');
+  const list = users || [], known = ROLE_GROUPS.map(g => g[0]);
+  const groups = ROLE_GROUPS.map(([role, label]) => ({ role, label, items: list.filter(u => u.role === role) })).filter(g => g.items.length);
+  const other = list.filter(u => !known.includes(u.role)); if (other.length) groups.push({ role: 'other', label: 'Other', items: other });
+  return (<Card title="Users" action={<span className="text-sm text-ocean/60">{list.length} accounts</span>}>
+    <div className="mb-4 rounded-2xl bg-foam p-4"><h3 className="font-display text-lg">Add an admin account</h3><p className="mb-3 text-sm text-ocean/70">Admin accounts can only be created here, by a signed-in admin. They cannot be created from the public sign-up page.</p>
+      <Form label="Create admin" fields={[['fullName', 'Full name'], ['email', 'Email', 'email'], ['password', 'Password (8+ characters)', 'password']]} onSubmit={async v => { const ok = await run(() => api('/admin/users', { method: 'POST', body: v }), reload); setNote(ok === false ? '' : 'Admin account created. They can sign in now.'); return ok; }} />{note && <p role="status" className="mt-3 rounded-xl bg-teal/10 p-3 text-sm">{note}</p>}</div>
+    {!users && <p className="text-sm text-ocean/60">Loading…</p>}
+    {groups.map(g => { const isOpen = open[g.role] ?? true; return (<section key={g.role} className="mb-3 overflow-hidden rounded-2xl border border-line">
+      <button type="button" aria-expanded={isOpen} onClick={() => setOpen(o => ({ ...o, [g.role]: !isOpen }))} className="flex w-full items-center justify-between gap-3 bg-foam px-4 py-2.5 text-left">
+        <span className="flex items-center gap-2 font-semibold text-ocean">{isOpen ? <ChevronDown size={16} /> : <ChevronRight size={16} />}{g.label}</span>
+        <span className="rounded-full bg-white px-2.5 py-0.5 text-xs text-ocean/70">{g.items.length}</span></button>
+      {isOpen && <div className="max-h-[24rem] overflow-y-auto px-4">{g.items.map(u => <div key={u.id} className="flex flex-wrap items-center justify-between gap-2 border-b border-line py-2 text-sm last:border-b-0"><span><b>{u.full_name}</b> · {u.email}</span><span className="flex items-center gap-3">{!u.is_active && <Badge s="suspended">inactive</Badge>}<button className="underline" onClick={() => run(() => api(`/admin/users/${u.id}/active`, { method: 'PATCH', body: { active: !u.is_active } }), reload)}>{u.is_active ? 'Deactivate' : 'Reactivate'}</button></span></div>)}</div>}
+    </section>); })}
+  </Card>);
 }
