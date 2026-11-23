@@ -4,6 +4,9 @@ const store = {}; globalThis.localStorage = { getItem: k => store[k] ?? null, se
 const { handle } = await import('../src/lib/mock.js');
 const login = async (e) => { const r = await handle('POST', '/auth/login', { email: e + '@demo.test', password: 'demo1234' }); localStorage.setItem('token', r.token); return r; };
 const fails = (p, re) => assert.rejects(p, re);
+const CARD = { token: 'sbx_ok_4242', brand: 'Visa', last4: '4242', expMonth: 12, expYear: 2040 };
+// Book a stay the way the site does: ask the server for the current terms, then confirm exactly those terms with a card.
+const stay = async (h, roomId, ci, co, guests, extra = {}) => { const q = await h('GET', `/bookings/quote?roomId=${roomId}&checkIn=${ci}&checkOut=${co}`); return h('POST', '/bookings/stay', { roomId, checkIn: ci, checkOut: co, guests, acceptPolicy: true, card: CARD, expect: { tier: q.tier, dueNow: q.dueNow }, ...extra }); };
 const tokenFor = async (listingId) => { await login('admin'); const t = (await handle('GET', '/admin/qr')).find(q => q.listing_id === listingId).token; await login('tourist'); return t; };
 test('demo flows work end to end', async () => {
   await fails(handle('GET', '/checkin/me'), /Sign in/);
@@ -15,9 +18,9 @@ test('demo flows work end to end', async () => {
   const rw = (await handle('GET', '/rewards')).find(r => r.name.includes('Coffee')); const red = await handle('POST', `/rewards/${rw.id}/redeem`); assert.ok(red.claimCode); await fails(handle('POST', `/rewards/${rw.id}/redeem`), /more points/);
   const acc = (await handle('GET', '/accommodations'))[0]; const day = (n) => new Date(Date.now() + n * 864e5).toISOString().slice(0, 10);
   const rooms = await handle('GET', `/bookings/availability?accommodationId=${acc.accommodation_id}&checkIn=${day(5)}&checkOut=${day(7)}&guests=4`); assert.equal(rooms.length, 1);
-  const bk = await handle('POST', '/bookings/stay', { roomId: rooms[0].id, checkIn: day(5), checkOut: day(7), guests: 4 }); assert.equal(bk.booking.total, 5000);
-  await fails(handle('POST', '/bookings/stay', { roomId: rooms[0].id, checkIn: day(5), checkOut: day(7), guests: 4 }), /just taken/);
-  await handle('POST', `/payments/${bk.payment.id}/sandbox-confirm`); assert.equal((await handle('GET', '/bookings/mine')).stays[0].status, 'confirmed');
+  const bk = await stay(handle, rooms[0].id, day(5), day(7), 4); assert.equal(bk.booking.total, 5000); assert.equal(bk.booking.tier, 'guarantee'); assert.equal(bk.payment, null);
+  await fails(stay(handle, rooms[0].id, day(5), day(7), 4), /just taken|Choose valid/);
+  const mine0 = (await handle('GET', '/bookings/mine')).stays[0]; assert.equal(mine0.status, 'pending'); assert.equal(mine0.tier, 'guarantee'); assert.equal(mine0.card.last4, '4242');
   const g = await handle('POST', '/itineraries/generate', { title: 'T', days: 2, pace: 'balanced', budget: 50 }); assert.ok(g.items.length >= 3);
   const u = await handle('PUT', `/itineraries/${g.id}`, { title: 'T2', budget: 50, items: g.items.map(i => ({ day_no: 1, listing_type: i.listing_type, listing_id: i.listing_id, est_cost: 100 })) }); assert.equal(u.totals.overBudget, true);
   const sh = await handle('POST', `/itineraries/${g.id}/share`); assert.equal((await handle('GET', `/itineraries/shared/${sh.token}`)).share_token, undefined);
@@ -190,7 +193,7 @@ test('rooms: add, edit, pause, and protect rooms that have booking history', asy
   await fails(handle('POST', `/owner/business/${inn.id}/rooms`, { name: '', capacity: 2, pricePerNight: 10 }), /Check the room/); await fails(handle('POST', `/owner/business/${inn.id}/rooms`, { name: 'X', capacity: 0, pricePerNight: 10 }), /Check the room/);
   const e = await handle('PUT', `/owner/rooms/${suite.id}`, { name: 'Suite', capacity: 3, pricePerNight: 4200, quantity: 2 }); assert.equal(e.rooms.find(r => r.id === suite.id).price, 4200);
   const std = v.rooms.find(r => r.name === 'Standard room'); await login('tourist');
-  await handle('POST', '/bookings/stay', { roomId: std.id, checkIn: day(3), checkOut: day(4), guests: 2 });
+  await stay(handle, std.id, day(3), day(4), 2);
   await login('owner'); await fails(handle('DELETE', `/owner/rooms/${std.id}`), /booking history/);
   const paused = await handle('PUT', `/owner/rooms/${std.id}`, { name: 'Standard room', capacity: 2, pricePerNight: 1500, quantity: 0 }); assert.equal(paused.rooms.find(r => r.id === std.id).quantity, 0);
   await login('tourist'); const avail = await handle('GET', `/bookings/availability?accommodationId=${inn.publicPath.split('/').pop()}&checkIn=${day(10)}&checkOut=${day(11)}&guests=2`); assert.ok(!avail.some(r => r.id === std.id));   // paused rooms are not offered
@@ -200,20 +203,19 @@ test('rooms: add, edit, pause, and protect rooms that have booking history', asy
 test('stay reservations: the owner is told, manages them, and the guest is told back', async () => {
   await resetDemo(); await login('owner'); const bid = (await mineOf('Seaside')).id; assert.equal((await handle('GET', '/notifications')).unread, 0);
   const inn = await handle('GET', `/owner/business/${bid}`), fam = inn.rooms.find(r => r.name === 'Family room'); await login('tourist');
-  const bk = await handle('POST', '/bookings/stay', { roomId: fam.id, checkIn: day(5), checkOut: day(7), guests: 3 });
+  const bk = await stay(handle, fam.id, day(5), day(7), 3);
   await login('owner'); let n = await handle('GET', '/notifications'); assert.equal(n.unread, 1); assert.match(n.items[0].title, /New booking request at Seaside Inn/); assert.match(n.items[0].body, /Demo Tourist.*Family room.*3 guest/); assert.match(n.items[0].link, /tab=reservations/);
   let res = await handle('GET', `/owner/business/${bid}/reservations`); assert.equal(res.length, 1); assert.equal(res[0].status, 'pending'); assert.equal(res[0].total, 5000); assert.equal(res[0].email, 'tourist@demo.test'); assert.equal((await handle('GET', `/owner/business/${bid}`)).stats.pending, 1);
   await fails(handle('PATCH', `/owner/reservations/stay/${bk.booking.id}`, { status: 'completed' }), /cannot be changed/);
   await handle('POST', '/notifications/read', {}); assert.equal((await handle('GET', '/notifications')).unread, 0);
-  await login('tourist'); await handle('POST', `/payments/${bk.payment.id}/sandbox-confirm`);                                                     // paying tells the owner again
-  await login('owner'); n = await handle('GET', '/notifications'); assert.match(n.items[0].title, /Payment received/); assert.equal(n.unread, 1);
+  await handle('PATCH', `/owner/reservations/stay/${bk.booking.id}`, { status: 'confirmed' });
   assert.equal((await handle('PATCH', `/owner/reservations/stay/${bk.booking.id}`, { status: 'completed' })).status, 'completed'); await fails(handle('PATCH', `/owner/reservations/stay/${bk.booking.id}`, { status: 'confirmed' }), /cannot be changed/);
   // decline another request, and the room is free for those dates again
-  await login('tourist'); const b2 = await handle('POST', '/bookings/stay', { roomId: fam.id, checkIn: day(9), checkOut: day(10), guests: 2 });
-  await fails(handle('POST', '/bookings/stay', { roomId: fam.id, checkIn: day(9), checkOut: day(10), guests: 2 }), /just taken/);
+  await login('tourist'); const b2 = await stay(handle, fam.id, day(9), day(10), 2);
+  await fails(stay(handle, fam.id, day(9), day(10), 2), /just taken|Choose valid/);
   await login('owner'); await handle('PATCH', `/owner/reservations/stay/${b2.booking.id}`, { status: 'declined' });
   await login('tourist'); const g = await handle('GET', '/notifications'); assert.match(g.items[0].title, /Your booking at Seaside Inn \(sample\) was declined/); assert.equal(g.items[0].link, '/bookings'); assert.equal((await handle('GET', '/bookings/mine')).stays.find(s => s.id === b2.booking.id).status, 'declined');
-  await handle('POST', '/bookings/stay', { roomId: fam.id, checkIn: day(9), checkOut: day(10), guests: 2 });
+  await stay(handle, fam.id, day(9), day(10), 2);
   await handle('POST', '/notifications/read', {}); assert.equal((await handle('GET', '/notifications')).unread, 0);
   await login('owner2'); await fails(handle('PATCH', `/owner/reservations/stay/${b2.booking.id}`, { status: 'confirmed' }), /not found/); assert.equal((await handle('GET', '/notifications')).items.length, 0);   // other owners see nothing
   await login('owner'); await fails(handle('PATCH', '/owner/reservations/constructor/x', { status: 'confirmed' }), /Unknown reservation type/);
@@ -261,7 +263,7 @@ test('emails go out only when the host supplies a mailer, and never block the bo
   const { createBackend, seed } = await import('../src/lib/backend.js'); let db = seed(), tok = ''; const sent = [];
   const mk = (email) => createBackend({ token: () => tok, load: async () => structuredClone(db), save: async d => { db = structuredClone(d); }, email, siteUrl: () => 'https://site.test' });
   const as = async (be, who) => { tok = (await be.handle('POST', '/auth/login', { email: who + '@demo.test', password: 'demo1234' })).token; };
-  let off = 0; const book = async (be) => { await as(be, 'tourist'); const fam = db.rooms.find(r => r.name === 'Family room'); off += 2; return be.handle('POST', '/bookings/stay', { roomId: fam.id, checkIn: day(off), checkOut: day(off + 1), guests: 2 }); };
+  let off = 0; const book = async (be) => { await as(be, 'tourist'); const fam = db.rooms.find(r => r.name === 'Family room'); off += 2; return stay(be.handle, fam.id, day(off), day(off + 1), 2); };
   await book(mk(undefined)); assert.equal(sent.length, 0);                                                                              // no mailer: in-site alert only
   assert.equal(db.notifications.length, 1);
   const be = mk(async (m) => { sent.push(m); }); const bk = await book(be); assert.equal(sent.length, 1);

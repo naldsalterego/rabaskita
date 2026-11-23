@@ -10,6 +10,30 @@ npm run dev        # open http://localhost:5173
 ```
 Sign-in page has one-tap demo logins: Tourist, Business owner, Transport provider, Admin (password for all: `demo1234`).
 
+## Stay booking protection
+
+Stay bookings follow one policy, written once in `client/src/lib/policy.js` and used by both the pages and the backend. Deadlines are in hotel local time (Philippine time) and every amount is the final price including taxes and mandatory fees, so owners must enter all-in room rates.
+
+| Booked | At booking | Cancelling | No-show |
+|---|---|---|---|
+| 72 hours or more before check-in | Valid card on file, nothing charged | Free until 72 hours before check-in. Reminder at 96 hours. Not guaranteed by the deadline: released automatically | 50% charged to the card |
+| 48 to 72 hours before | 50% charged | Non-refundable | Deposit forfeited, nothing more |
+| Under 48 hours (same day included) | 100% charged | Non-refundable | Full amount forfeited |
+
+How it works:
+- A booking is a **request** until the hotel accepts it. The guest withdrawing before that, the hotel declining or cancelling, or the hotel never replying before check-in all refund everything charged.
+- After the free-cancellation deadline, cancelling a card-guaranteed booking charges 50% (`POLICY.lateFeeRate`). A hotel can mark a no-show only after 18:00 on the check-in day.
+- The server quotes the terms (`GET /bookings/quote`) and rejects a booking if the terms changed since the guest saw them.
+- Card numbers and security codes never leave the browser. Only a token, brand, last 4 digits and expiry are sent. Sandbox cards are listed in `client/src/lib/card.js`. Replace `tokenize` and the charge/refund helpers in `backend.js` with a real gateway (PayMongo, Xendit, Stripe) before taking real money.
+- There is no clock in the browser or in a serverless function, so reminders, automatic release and expiry run at the start of every request. State is always correct when anyone looks. For on-time alerts, add a Netlify scheduled function that calls the API hourly.
+- Messages: on every stay, table, ride and rental request, the guest and the business can message each other, and either can write first. Messages go to the business owner's account (there are no separate staff roles). Each side gets an alert and an unread badge. Limits: 1,000 characters per message, 5 in a row without a reply, 200 per conversation. Endpoints: `GET/POST /messages/:kind/:id` and `POST /messages/:kind/:id/read`.
+- Availability: owners of places to stay get an **Availability** tab with tonight's free rooms, a calendar per room type (who is in the room each night), and a tool to close dates for walk-ins, repairs or rooms sold elsewhere. Tourists see a calendar on the stay page with fully booked dates crossed out, "N left" on partly booked dates, and the list of rooms available for the dates they choose. Availability is counted night by night (check-in night counts, check-out night does not). Endpoints: `GET /accommodations/:id/calendar` (public), `GET /owner/business/:id/availability`, `POST /owner/business/:id/blocks`, `DELETE /owner/blocks/:id`. Online stays are limited to 60 nights.
+- A pending request is declined and refunded automatically only after the guest was due to arrive and the hotel has had at least 6 hours (`POLICY.replyWindowHours`) to answer.
+- Two people at the same moment: on the shared (Netlify) backend every save is conditional. A request only saves if nobody else saved since it read the data. If someone did, it is run again from the fresh data, so when two guests book the last room, one gets it and the other is told it was just taken. Nothing is silently overwritten. Emails and photo deletions wait until the save went through, so a repeated request never sends twice. After 8 attempts the guest gets a "system is busy, try again" message (HTTP 503). Booking dialogs also send a one-time `requestId`, so a double tap or a retry after a dropped connection returns the same booking instead of making and charging a second one. This needs `@netlify/blobs` 10.x or newer (conditional writes). The whole site is still one stored document, which is fine for a demo and a small pilot. For real traffic, move to a database that can lock a row or enforce a rule such as "no overlapping stays per room unit". The Express/Postgres server in `server/` does not have these protections.
+- Native delicacies (Eat): home-based food stops where everything is made to order. The admin adds them in the **Native delicacies** tab (or the quick action on Overview) with basic information only: name, municipality, photos, description, address, phone, hours, the delicacies they make with prices, how much notice they need and how to order. No business papers are asked for, they are approved at once, and they never count as "papers missing" in reports (`REQUIRED.native` is empty, status `not_required`). They are stored as restaurants with `type: 'native'`, so menus, photos, reviews and check-in QR codes work, but they cannot take table reservations. The Eat page has a Restaurants / Native delicacies switch (`GET /restaurants?type=native|restaurant`). They belong to the admin account, so they never appear in a business owner's dashboard. Business owners cannot add them yet.
+- Municipality filter: Eat, Stays and Shops have the same municipality chips as Explore, each showing how many places that municipality has. The choice is kept in the page address (`?municipality=Virac`).
+- Ride and rental requests now alert the provider, and the provider's answer alerts the guest. The deposit and full-payment rules apply to stays only for now.
+
 ## Deploy to Netlify (pick one)
 1. **Drag and drop:** `cd client && npm install && npm run build`, then drag the `client/dist` folder onto https://app.netlify.com/drop.
 2. **From Git:** push this folder to GitHub, "Add new site → Import", Netlify reads the root `netlify.toml` (base `client`, build `npm run build`, publish `dist`).

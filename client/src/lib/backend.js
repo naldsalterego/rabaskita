@@ -2,6 +2,8 @@
 // It runs in the browser (data in localStorage) or in a Netlify function (data in Netlify Blobs), through the `io` adapter.
 // All listings below are SAMPLE data for a prototype. Nothing here is real or verified.
 import { nearestOrder, withLegs } from './itinerary.js';
+import { POLICY, TIERS, quote, cancelTerms, noShowFee, canMarkNoShow, arrivalAt, localDate, localText, peso, isDate } from './policy.js';
+import { checkCard } from './card.js';
 function seedBranding() { return { siteName: 'TRISIKSTI', tagline: 'The Happy Island · Tourism platform', logo: '', partnerLogo: '', showPartner: true, partnerBackdrop: 'navy' }; }
 function seedCredits() { return { company: 'IslaTek', members: ['Engr. Morris Aquino', 'Engr. John Ronald Rodriguez', 'Engr. John Patrick Valledor', 'Engr. Benz Art Wayne Lagsilon'].map(name => ({ id: uid(), name, role: '', photo: '' })) }; }
 const uid = () => globalThis.crypto?.randomUUID?.() ?? 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, c => { const r = Math.random() * 16 | 0; return (c === 'x' ? r : (r & 3 | 8)).toString(16); });
@@ -29,6 +31,8 @@ export function seed(adminPassword = 'demo1234') {
   inn.documents = sampleDocs(['bir', 'registration', 'permit', 'fire']); // a sample listing with complete papers, to show what tourists see
   [[inn, 'inn', [['Standard room', 2, 1500, 2], ['Family room', 4, 2500, 1]]], [home, 'homestay', [['Whole house', 6, 3200, 1]]]].forEach(([b, type, rooms]) => { const a = { id: uid(), business_id: b.id, type, amenities: ['Wi-Fi (sample)', 'Breakfast (sample)'] }; d.accommodations.push(a); rooms.forEach(([name, capacity, price, quantity]) => d.rooms.push({ id: uid(), accommodation_id: a.id, name, capacity, price_per_night: price, quantity })); });
   [[biz('Seafood Grill', 'Virac', 'Sample seafood restaurant.', 13.585, 124.235, 'Restaurants', ownerC), ['Seafood', 'Filipino'], 2, false, [['Grilled fish', 280], ['Seafood soup', 180], ['Rice', 30]]], [biz('Island Cafe', 'Virac', 'Sample cafe that takes reservations.', 13.582, 124.228, 'Cafes', ownerC), ['Cafes', 'Local delicacies'], 1, true, [['Coffee', 90], ['Pastry', 70]]]].forEach(([b, cuisines, pr, res, menu]) => { const r = { id: uid(), business_id: b.id, cuisines, price_range: pr, accepts_reservations: res }; d.restaurants.push(r); menu.forEach(([item_name, price]) => d.menus.push({ id: uid(), restaurant_id: r.id, item_name, description: '', price })); });
+  [[biz('Aling Rosa Rice Cakes', 'Virac', 'Sample home kitchen. Rice cakes are cooked fresh when you order.', 13.583, 124.231, 'Native delicacies', admin), ['Rice cakes', 'Sinapot'], 'Order 1 day ahead', 'Message or call to order. Pick-up in Virac.', [['Sinapot (per piece)', 25], ['Puto (box of 10)', 120]]],
+   [biz('Pili Treats Kitchen', 'Bato', 'Sample home kitchen. Pili sweets are made in small batches for each order.', 13.6, 124.37, 'Native delicacies', admin), ['Pili sweets'], 'Order 2 days ahead', 'Order by phone. Pick-up or delivery within Bato.', [['Pili brittle (pack)', 150], ['Pili tart (box of 6)', 260]]]].forEach(([b, cuisines, lead, note, menu]) => { const r = { id: uid(), business_id: b.id, type: 'native', cuisines, price_range: null, accepts_reservations: false, lead_time: lead, order_note: note }; d.restaurants.push(r); menu.forEach(([item_name, price]) => d.menus.push({ id: uid(), restaurant_id: r.id, item_name, description: '', price })); });
   biz('Island Souvenirs', 'Virac', 'Sample souvenir shop with local crafts and gifts.', 13.5815, 124.232, 'Souvenir shops', ownerD); [['Coconut-shell keychain', 80, 'Handmade, sample item'], ['Woven abaca bag', 450, 'Local weave, sample item'], ['Dried fish pack', 220, 'Sample item']].forEach(([name, price, description]) => d.products.push({ id: uid(), business_id: d.businesses.find(x => x.name.startsWith('Island Souvenirs')).id, name: name + ' (sample)', price, description, photo: null })); biz('Barangay Grocery', 'Bato', 'Sample grocery for travel supplies and snacks.', 13.601, 124.301, 'Groceries', ownerD);
   const p = { id: uid(), owner_id: prov.id, name: 'Sample Airport Vans', phone: '000-000-0000 (sample)', status: 'approved', created_at: now(), documents: [] }, p2 = { id: uid(), owner_id: prov2.id, name: 'Sample Island Rentals', phone: '000-000-0001 (sample)', status: 'approved', created_at: now(), documents: [] }; d.providers.push(p, p2); p.documents = sampleDocs(['bir', 'registration', 'permit', 'franchise']);
   const veh = (pr, name, type, capacity, driver, self, withDriver, description) => d.vehicles.push({ id: uid(), provider_id: pr.id, name: name + ' (sample)', type, capacity, plate_no: 'SAMPLE', driver_name: driver, description: description + ' Sample listing and sample price.', rent_self: self, rent_driver: withDriver, is_available: true });
@@ -43,7 +47,7 @@ export function seed(adminPassword = 'demo1234') {
 export function createBackend(io) {
   let db;
   const deletePhoto = (r) => { try { const p = io.deletePhoto?.(r); if (p?.then) pending.push(p.catch(() => {})); } catch { /* ignore */ } };
-  const loadDb = async () => { let d = await io.load(); if (!d) { d = seed(io.adminPassword?.()); await io.save(d); } d.rentals ||= []; d.credits ||= seedCredits(); d.branding ||= seedBranding(); d.products ||= []; d.notifications ||= []; return d; };
+  const loadDb = async () => { let d = await io.load(); if (!d) { d = seed(io.adminPassword?.()); await io.save(d); } d.rentals ||= []; d.credits ||= seedCredits(); d.branding ||= seedBranding(); d.products ||= []; d.notifications ||= []; d.messages ||= []; d.blocks ||= []; return d; };
   const mn = (id) => db.municipalities.find(m => m.id == id)?.name;
   const tierPts = (id) => db.tiers.find(t => t.id == id)?.points ?? null;
   const biz = (id) => db.businesses.find(b => b.id === id);
@@ -52,16 +56,18 @@ export function createBackend(io) {
   const dest = (x) => ({ ...x, municipality: mn(x.municipality_id), points: tierPts(x.point_tier_id) });
   // ---- business papers (documents). The tourism office decides which papers are required; adjust REQUIRED to match its rules.
   const DOC_LABELS = { bir: 'BIR Certificate of Registration (Form 2303)', registration: 'Business registration (DTI / SEC / CDA)', permit: "Mayor's / business permit", sanitary: 'Sanitary permit', fire: 'Fire safety inspection certificate', franchise: 'Transport franchise or permit, and vehicle registration (OR/CR)', dot: 'DOT accreditation (if any)', other: 'Other supporting document' };
-  const REQUIRED = { stays: ['bir', 'registration', 'permit', 'fire'], restaurants: ['bir', 'registration', 'permit', 'sanitary', 'fire'], transport: ['bir', 'registration', 'permit', 'franchise'], shops: ['bir', 'registration', 'permit'] };
+  const REQUIRED = { stays: ['bir', 'registration', 'permit', 'fire'], restaurants: ['bir', 'registration', 'permit', 'sanitary', 'fire'], transport: ['bir', 'registration', 'permit', 'franchise'], shops: ['bir', 'registration', 'permit'],
+    native: [] }; // home-based, made-to-order food stops (native delicacies) are not asked for business papers
   const docState = (d) => (d.expires && d.expires < now().slice(0, 10) ? 'expired' : d.verified ? 'verified' : 'review');
   const RANK = { verified: 3, review: 2, expired: 1 };
   const typeState = (docs, type) => ((docs || []).filter(d => d.type === type).map(docState).sort((a, b) => RANK[b] - RANK[a])[0]) || 'missing';
-  const overall = (docs, kind) => { const st = REQUIRED[kind].map(t => typeState(docs, t)); return st.every(x => x === 'verified') ? 'complete' : st.every(x => x === 'verified' || x === 'review') ? 'review' : 'incomplete'; };
+  const overall = (docs, kind) => { if (!REQUIRED[kind].length) return 'not_required'; const st = REQUIRED[kind].map(t => typeState(docs, t)); return st.every(x => x === 'verified') ? 'complete' : st.every(x => x === 'verified' || x === 'review') ? 'review' : 'incomplete'; };
   const paperSummary = (o, kind) => ({ status: overall(o?.documents, kind), have: REQUIRED[kind].filter(t => typeState(o?.documents, t) === 'verified').length, need: REQUIRED[kind].length });
   const docOut = (d, admin) => ({ id: d.id, type: d.type, label: DOC_LABELS[d.type], state: docState(d), number: admin || d.public ? d.number : '', expires: d.expires || '', verified: !!d.verified, verifiedAt: d.verifiedAt || null, public: !!d.public, fileName: d.fileName || '', file: admin || d.public ? d.file : '', hasFile: !!d.file, uploadedAt: d.uploadedAt, by: d.by });
   const papersView = (o, kind, admin = false) => { const docs = o?.documents || []; return { status: overall(docs, kind), required: REQUIRED[kind].map(t => ({ type: t, label: DOC_LABELS[t], state: typeState(docs, t), docs: docs.filter(d => d.type === t).map(d => docOut(d, admin)) })), other: docs.filter(d => !REQUIRED[kind].includes(d.type)).map(d => docOut(d, admin)), types: [...REQUIRED[kind], ...Object.keys(DOC_LABELS).filter(t => !REQUIRED[kind].includes(t))].map(t => ({ id: t, label: DOC_LABELS[t], required: REQUIRED[kind].includes(t) })) }; };
-  const STAY_CATS = ['Hotels and resorts', 'Staycation houses'], EAT_CATS = ['Restaurants', 'Cafes'];
-  const kindOfBiz = (b) => (db.accommodations.some(a => a.business_id === b.id) || STAY_CATS.includes(b.category) ? 'stays' : db.restaurants.some(r => r.business_id === b.id) || EAT_CATS.includes(b.category) ? 'restaurants' : 'shops');
+  const STAY_CATS = ['Hotels and resorts', 'Staycation houses'], EAT_CATS = ['Restaurants', 'Cafes'], NATIVE_CAT = 'Native delicacies';
+  const restKind = (r) => (r.type === 'native' ? 'native' : 'restaurants');
+  const kindOfBiz = (b) => (db.accommodations.some(a => a.business_id === b.id) || STAY_CATS.includes(b.category) ? 'stays' : db.restaurants.some(r => r.business_id === b.id && r.type === 'native') || b.category === NATIVE_CAT ? 'native' : db.restaurants.some(r => r.business_id === b.id) || EAT_CATS.includes(b.category) ? 'restaurants' : 'shops');
   const docTarget = (kind, id) => {
     if (kind === 'transport') { const o = db.providers.find(x => x.id === id); return o && { obj: o, kind: 'transport' }; }
     if (kind === 'stays') { const a = db.accommodations.find(x => x.id === id); return a && { obj: biz(a.business_id), kind: 'stays' }; }
@@ -70,8 +76,8 @@ export function createBackend(io) {
     return null;
   };
   const bizPub = (b) => ({ cover_photo: b.cover_photo || null, photos: b.photos || [], id: b.id, name: b.name, description: b.description, address: b.address, lat: b.lat, lng: b.lng, phone: b.phone, hours: b.hours, municipality: mn(b.municipality_id), category: b.category });
-  const restRow = (r) => ({ ...bizPub(biz(r.business_id)), papers_status: overall(biz(r.business_id).documents, 'restaurants'), restaurant_id: r.id, cuisines: r.cuisines, price_range: r.price_range, accepts_reservations: r.accepts_reservations });
-  const accRow = (a) => { const rs = db.rooms.filter(r => r.accommodation_id === a.id); return { ...bizPub(biz(a.business_id)), papers_status: overall(biz(a.business_id).documents, 'stays'), accommodation_id: a.id, type: a.type, amenities: a.amenities, from_price: rs.length ? Math.min(...rs.map(r => r.price_per_night)) : null }; };
+  const restRow = (r) => ({ ...bizPub(biz(r.business_id)), papers_status: overall(biz(r.business_id).documents, restKind(r)), restaurant_id: r.id, type: r.type === 'native' ? 'native' : 'restaurant', cuisines: r.cuisines, price_range: r.price_range, accepts_reservations: r.accepts_reservations, lead_time: r.lead_time || null, order_note: r.order_note || '' });
+  const accRow = (a) => { const rs = db.rooms.filter(r => r.accommodation_id === a.id); return { ...bizPub(biz(a.business_id)), papers_status: overall(biz(a.business_id).documents, 'stays'), accommodation_id: a.id, type: a.type, check_in_time: a.check_in_time || POLICY.defaultCheckIn, amenities: a.amenities, from_price: rs.length ? Math.min(...rs.map(r => r.price_per_night)) : null }; };
   const need = (ok, msg) => { if (!ok) throw new Error(msg); };
   // ---- notifications: shown in the site (bell + Alerts page) and, when the host provides io.email, also sent by email
   const when = (iso) => { try { return new Date(iso).toLocaleString('en-PH', { timeZone: 'Asia/Manila', dateStyle: 'medium', timeStyle: 'short' }); } catch { return String(iso); } };
@@ -85,12 +91,13 @@ export function createBackend(io) {
   const stayCtx = (s) => { const room = db.rooms.find(r => r.id === s.room_id), a = room && db.accommodations.find(x => x.id === room.accommodation_id); return { room, bz: a && biz(a.business_id), guest: db.users.find(u => u.id === s.user_id) }; };
   const tableCtx = (t) => { const r = db.restaurants.find(x => x.id === t.restaurant_id); return { bz: r && biz(r.business_id), guest: db.users.find(u => u.id === t.user_id) }; };
   const dshort = (d) => { try { return new Date(String(d).slice(0, 10) + 'T00:00:00Z').toLocaleDateString('en-PH', { month: 'short', day: 'numeric', year: 'numeric', timeZone: 'UTC' }); } catch { return String(d).slice(0, 10); } };
+  const policyLine = (s) => !s.policy_tier ? '' : ' · ' + ({ guarantee: `card on file (${s.card?.brand} ••${s.card?.last4}), free cancellation until ${localText(s.free_cancel_until)}`, deposit: `${peso(s.charged)} deposit paid, non-refundable`, full: `${peso(s.charged)} paid in full, non-refundable` })[s.policy_tier];
   const stayText = (s, room, guest) => `${guest?.full_name || 'A guest'} · ${room?.name || 'room'} · ${dshort(s.check_in)} to ${dshort(s.check_out)} · ${s.guests} guest(s) · ₱${Number(s.total).toLocaleString('en-PH')}`;
   const tableText = (t, guest) => `${guest?.full_name || 'A guest'} · party of ${t.party_size} · ${when(t.reserved_at)}`;
   const ownerLink = (bz) => `/dashboard?b=${bz.id}&tab=reservations`;
-  const stayAlert = (s, what) => { const { room, bz, guest } = stayCtx(s); if (!bz) return; notify(bz.owner_id, { type: 'booking', title: { request: `New booking request at ${bz.name}`, paid: `Payment received at ${bz.name}`, cancelled: `Booking cancelled at ${bz.name}` }[what], body: stayText(s, room, guest), link: ownerLink(bz) }, true); };
-  const GUEST_WORDS = { confirmed: 'confirmed', declined: 'declined', cancelled: 'cancelled by the business' };
-  const guestAlert = (userId, bz, what, status, body) => { if (GUEST_WORDS[status]) notify(userId, { type: 'booking', title: `Your ${what} at ${bz.name} was ${GUEST_WORDS[status]}`, body, link: '/bookings' }, true); };
+  const stayAlert = (s, what) => { const { room, bz, guest } = stayCtx(s); if (!bz) return; notify(bz.owner_id, { type: 'booking', title: { request: `New booking request at ${bz.name}`, paid: `Payment received at ${bz.name}`, cancelled: `Booking cancelled at ${bz.name}` }[what], body: stayText(s, room, guest) + (what === 'request' ? policyLine(s) : ''), link: ownerLink(bz) }, true); };
+  const GUEST_WORDS = { confirmed: 'confirmed', declined: 'declined', cancelled: 'cancelled by the business' }, STAY_WORDS = { ...GUEST_WORDS, no_show: 'marked as a no-show' };
+  const guestAlert = (userId, bz, what, status, body, words = GUEST_WORDS) => { if (words[status]) notify(userId, { type: 'booking', title: `Your ${what} at ${bz.name} was ${words[status]}`, body, link: '/bookings' }, true); };
   const mine = (user, bid) => db.businesses.find(b => b.id === bid && b.owner_id === user.id && b.status === 'approved');
   const provOf = (user, approved = true) => db.providers.find(p => p.owner_id === user.id && (!approved || p.status === 'approved'));
   const monthly = (arr) => Object.entries(arr.reduce((m, d) => { const k = d.slice(0, 7); m[k] = (m[k] || 0) + 1; return m; }, {})).sort().reverse().slice(0, 12).map(([month, n]) => ({ month, n }));
@@ -100,7 +107,7 @@ export function createBackend(io) {
   const currentUser = () => { const t = io.token() || ''; return t.startsWith('demo:') ? db.users.find(u => u.id === t.slice(5) && u.is_active) : null; };
   const pending = [];
   async function handle(method, fullPath, body) {
-    db = await loadDb(); const u = new URL(fullPath, 'http://x');
+    db = await loadDb(); if (sweepStays()) await io.save(db); const u = new URL(fullPath, 'http://x');
     for (const [m, re, fn, roles] of routes) {
       if (m !== method) continue; const mt = re.exec(u.pathname); if (!mt) continue;
       const user = currentUser();
@@ -126,8 +133,8 @@ export function createBackend(io) {
   R('GET', '/municipalities', () => db.municipalities);
   R('GET', '/destinations', ({ q, user }) => db.destinations.filter(d => d.is_published && (!q.municipality || mn(d.municipality_id) === q.municipality) && (!q.q || d.name.toLowerCase().includes(q.q.toLowerCase()))).map(d => ({ ...dest(d), points: user ? tierPts(d.point_tier_id) : null })).sort((a, b) => a.name.localeCompare(b.name)));
   R('GET', '/destinations/:id', ({ p, user }) => { const d = db.destinations.find(x => x.id === p[0] && x.is_published); need(d, 'Destination not found'); return { ...dest(d), points: user ? tierPts(d.point_tier_id) : null }; });
-  R('GET', '/restaurants', ({ q }) => db.restaurants.filter(r => biz(r.business_id).status === 'approved' && (!q.cuisine || r.cuisines.some(c => c.toLowerCase() === q.cuisine.toLowerCase()))).map(restRow));
-  R('GET', '/restaurants/:id', ({ p }) => { const r = db.restaurants.find(x => x.id === p[0]); need(r, 'Restaurant not found'); return { ...restRow(r), papers: papersView(biz(r.business_id), 'restaurants'), menu: db.menus.filter(m => m.restaurant_id === r.id) }; });
+  R('GET', '/restaurants', ({ q }) => db.restaurants.filter(r => biz(r.business_id).status === 'approved' && (q.type === 'native' ? r.type === 'native' : q.type === 'restaurant' ? r.type !== 'native' : true) && (!q.cuisine || r.cuisines.some(c => c.toLowerCase() === q.cuisine.toLowerCase()))).map(restRow));
+  R('GET', '/restaurants/:id', ({ p }) => { const r = db.restaurants.find(x => x.id === p[0]); need(r, 'Restaurant not found'); return { ...restRow(r), papers: papersView(biz(r.business_id), restKind(r)), menu: db.menus.filter(m => m.restaurant_id === r.id) }; });
   R('GET', '/accommodations', () => db.accommodations.filter(a => biz(a.business_id).status === 'approved').map(accRow));
   R('GET', '/accommodations/:id', ({ p }) => { const a = db.accommodations.find(x => x.id === p[0]); need(a && biz(a.business_id).status === 'approved', 'Accommodation not found'); return { ...accRow(a), papers: papersView(biz(a.business_id), 'stays'), rooms: db.rooms.filter(r => r.accommodation_id === a.id).sort((x, y) => x.price_per_night - y.price_per_night) }; });
   R('GET', '/businesses', ({ q }) => db.businesses.filter(b => b.status === 'approved' && ['Souvenir shops', 'Groceries'].includes(b.category) && (!q.category || b.category === q.category)).map(b => ({ ...bizPub(b), papers_status: overall(b.documents, 'shops') })));
@@ -154,27 +161,132 @@ export function createBackend(io) {
   }, []);
   // ---- stays, tables, payments
   const days = (a, b) => Math.round((new Date(b) - new Date(a)) / 864e5);
-  const free = (room, ci, co) => room.quantity - db.stays.filter(s => s.room_id === room.id && ['pending', 'confirmed'].includes(s.status) && s.check_in < co && s.check_out > ci).length;
-  R('GET', '/bookings/availability', ({ q }) => { need(q.checkIn && q.checkOut && q.checkOut > q.checkIn, 'Choose valid dates'); return db.rooms.filter(r => r.accommodation_id === q.accommodationId && r.capacity >= Number(q.guests || 1) && free(r, q.checkIn, q.checkOut) > 0).map(r => ({ ...r, available: free(r, q.checkIn, q.checkOut) })).sort((a, b) => a.price_per_night - b.price_per_night); });
+  // Room availability is worked out night by night. A "night" is the date a guest sleeps over: check-in counts, check-out does not.
+  // Units are taken by pending or confirmed stays, and by dates the owner closed (walk-ins, repairs, rooms sold elsewhere).
+  const addDay = (d, n) => new Date(new Date(d + 'T00:00:00Z').getTime() + n * 864e5).toISOString().slice(0, 10);
+  const nightsOf = (ci, co) => { const out = []; for (let d = String(ci).slice(0, 10); d < String(co).slice(0, 10) && out.length < 400; d = addDay(d, 1)) out.push(d); return out; };
+  const roomUse = (room, date) => ({
+    stays: db.stays.filter(s => s.room_id === room.id && ['pending', 'confirmed'].includes(s.status) && String(s.check_in).slice(0, 10) <= date && String(s.check_out).slice(0, 10) > date),
+    blocks: db.blocks.filter(x => x.room_id === room.id && x.start <= date && x.end > date) });
+  const usedOn = (room, date) => { const u = roomUse(room, date); return u.stays.length + u.blocks.reduce((t, x) => t + x.units, 0); };
+  const free = (room, ci, co) => room.quantity - Math.max(0, ...nightsOf(ci, co).map(d => usedOn(room, d)));
+  const MAX_NIGHTS = 60;
+  const monthStart = () => localDate().slice(0, 8) + '01';
+  const window_ = (q) => { const from = isDate(q.from) ? q.from : monthStart(); return { from, n: Math.min(Math.max(Math.floor(Number(q.days)) || 42, 1), 93) }; };
+  // what tourists see: for each room type, how many units are still free on each date
+  R('GET', '/accommodations/:id/calendar', ({ p, q }) => {
+    const a = db.accommodations.find(x => x.id === p[0]); need(a && biz(a.business_id).status === 'approved', 'Accommodation not found');
+    const { from, n } = window_(q), dates = Array.from({ length: n }, (_, i) => addDay(from, i));
+    return { from, today: localDate(), rooms: db.rooms.filter(r => r.accommodation_id === a.id).map(r => ({ id: r.id, name: r.name, capacity: r.capacity, price_per_night: r.price_per_night, quantity: r.quantity, days: Object.fromEntries(dates.map(d => [d, Math.max(0, r.quantity - usedOn(r, d))])) })) };
+  });
+  R('GET', '/bookings/availability', ({ q }) => { need(q.checkIn && q.checkOut && q.checkOut > q.checkIn && days(q.checkIn, q.checkOut) <= MAX_NIGHTS, `Choose valid dates (up to ${MAX_NIGHTS} nights)`); return db.rooms.filter(r => r.accommodation_id === q.accommodationId && r.capacity >= Number(q.guests || 1) && free(r, q.checkIn, q.checkOut) > 0).map(r => ({ ...r, available: free(r, q.checkIn, q.checkOut) })).sort((a, b) => a.price_per_night - b.price_per_night); });
+  // ---- stay booking protection (rules and amounts live in policy.js)
+  //   72h or more before check-in: valid card on file, nothing charged, free cancellation until 72h before check-in.
+  //   48h up to 72h before:        50% charged at booking, non-refundable.
+  //   under 48h (same day too):    100% charged at booking, non-refundable.
+  // A booking is a request until the hotel accepts it. If the hotel declines or cancels, whatever was charged is refunded in full.
+  const ciTime = (room) => db.accommodations.find(a => a.id === room?.accommodation_id)?.check_in_time || POLICY.defaultCheckIn;
+  const refundStay = (s, why) => { const pay = db.payments.find(x => x.id === s.payment_id); if (!s.policy_tier || !pay || pay.status !== 'paid') return 0; pay.status = 'refunded'; pay.refunded_at = now(); pay.refund_reason = why; return pay.amount; };
+  const chargeCard = (s, amount, why) => { if (!(amount > 0)) return 0; const pay = { id: uid(), user_id: s.user_id, amount, provider_ref: 'SBX-' + rnd(12), status: 'paid', reason: why }; db.payments.push(pay); s.fee_payment_id = pay.id; s.fee_charged = amount; return amount; };
   R('POST', '/bookings/stay', ({ b, user }) => {
-    const room = db.rooms.find(r => r.id === b.roomId); need(room && b.checkOut > b.checkIn && room.capacity >= b.guests, 'Room not available for that group size'); need(free(room, b.checkIn, b.checkOut) > 0, 'Sorry, that room was just taken for those dates');
-    const total = room.price_per_night * days(b.checkIn, b.checkOut); const pay = { id: uid(), user_id: user.id, amount: total, provider_ref: 'SBX-' + rnd(12), status: 'pending' }; db.payments.push(pay);
-    const s = { id: uid(), user_id: user.id, room_id: room.id, check_in: b.checkIn, check_out: b.checkOut, guests: b.guests, total, status: 'pending', payment_id: pay.id, created_at: now() }; db.stays.push(s); stayAlert(s, 'request'); return { booking: { id: s.id, status: s.status, total }, payment: pay };
+    // The page sends one requestId per booking dialog. If the same request arrives again (a double tap, or a retry after a dropped connection),
+    // the booking that already exists is returned instead of making and charging a second one.
+    const again = b.requestId && db.stays.find(x => x.user_id === user.id && x.request_id === String(b.requestId));
+    if (again) return { booking: { id: again.id, status: again.status, total: again.total, tier: again.policy_tier, charged: again.charged, free_cancel_until: again.free_cancel_until }, payment: db.payments.find(x => x.id === again.payment_id) ?? null, replayed: true };
+    const room = db.rooms.find(r => r.id === b.roomId); need(room && isDate(b.checkIn) && isDate(b.checkOut) && b.checkOut > b.checkIn && room.capacity >= b.guests, 'Room not available for that group size');
+    need(days(b.checkIn, b.checkOut) <= MAX_NIGHTS, `Online bookings are for up to ${MAX_NIGHTS} nights. Please message the hotel about longer stays.`); need(b.checkIn >= localDate(), 'The check-in date has already passed'); need(free(room, b.checkIn, b.checkOut) > 0, 'Sorry, that room was just taken for those dates');
+    need(b.acceptPolicy === true, 'Please read and accept the booking policy first');
+    const total = room.price_per_night * days(b.checkIn, b.checkOut), q = quote(total, b.checkIn, { time: ciTime(room) });
+    need(b.expect && b.expect.tier === q.tier && Number(b.expect.dueNow) === q.dueNow, 'The booking terms changed while you were booking. Please review them and confirm again.');
+    const card = checkCard(b.card, b.checkIn); // throws when the card is missing, declined, or expires before check-in
+    let pay = null;
+    if (q.dueNow > 0) { pay = { id: uid(), user_id: user.id, amount: q.dueNow, provider_ref: 'SBX-' + rnd(12), status: 'paid', reason: q.tier === TIERS.deposit ? 'stay deposit (50%)' : 'stay paid in full' }; db.payments.push(pay); }
+    const s = { id: uid(), user_id: user.id, room_id: room.id, check_in: b.checkIn, check_out: b.checkOut, guests: b.guests, total, status: 'pending', payment_id: pay?.id ?? null, created_at: now(),
+      request_id: b.requestId ? String(b.requestId).slice(0, 64) : undefined, policy_tier: q.tier, charged: q.dueNow, card, guarantee: q.tier === TIERS.guarantee ? 'guaranteed' : 'not_needed', free_cancel_until: q.cancelUntil, reminder_at: q.reminderAt, reminder_sent: false, policy_accepted_at: now() };
+    db.stays.push(s); stayAlert(s, 'request');
+    return { booking: { id: s.id, status: s.status, total, tier: q.tier, charged: q.dueNow, free_cancel_until: q.cancelUntil }, payment: pay };
   }, []);
-  R('POST', '/bookings/stay/:id/cancel', ({ p, user }) => { const s = db.stays.find(x => x.id === p[0] && x.user_id === user.id && ['pending', 'confirmed'].includes(x.status) && x.check_in > now().slice(0, 10)); need(s, 'This booking can no longer be cancelled'); s.status = 'cancelled'; stayAlert(s, 'cancelled'); }, []);
+  R('POST', '/bookings/stay/:id/cancel', ({ p, user }) => {
+    const s = db.stays.find(x => x.id === p[0] && x.user_id === user.id && ['pending', 'confirmed'].includes(x.status) && x.check_in >= localDate()); need(s, 'This booking can no longer be cancelled');
+    if (!s.policy_tier) { need(s.check_in > localDate(), 'This booking can no longer be cancelled'); s.status = 'cancelled'; stayAlert(s, 'cancelled'); return { refunded: 0, charged: 0, forfeited: 0 }; } // bookings made before the policy existed
+    const t = cancelTerms(s), refunded = t.refund > 0 ? refundStay(s, 'withdrawn before the hotel replied') : 0, charged = chargeCard(s, t.fee, 'late cancellation');
+    s.status = 'cancelled'; s.cancelled_by = 'guest'; s.cancelled_at = now(); stayAlert(s, 'cancelled');
+    return { refunded, charged, forfeited: t.forfeited || 0 };
+  }, []);
+  R('POST', '/bookings/stay/:id/guarantee', ({ p, b, user }) => { // replace the card on a card-guaranteed booking
+    const s = db.stays.find(x => x.id === p[0] && x.user_id === user.id && x.policy_tier === TIERS.guarantee && ['pending', 'confirmed'].includes(x.status)); need(s, 'Booking not found');
+    s.card = checkCard(b.card, s.check_in); s.guarantee = 'guaranteed'; return { ok: true };
+  }, []);
+  R('GET', '/bookings/quote', ({ q }) => { // what a booking would owe right now: the server's clock and the hotel's check-in time decide
+    const room = db.rooms.find(r => r.id === q.roomId); need(room && isDate(q.checkIn) && isDate(q.checkOut) && q.checkOut > q.checkIn, 'Choose valid dates'); need(q.checkIn >= localDate() && days(q.checkIn, q.checkOut) <= MAX_NIGHTS, 'Choose valid dates');
+    const nights = days(q.checkIn, q.checkOut); return { ...quote(room.price_per_night * nights, q.checkIn, { time: ciTime(room) }), nights, check_in_time: ciTime(room) };
+  });
+  // Runs before every request (there is no clock in the browser or in a serverless function, so state is brought up to date whenever anyone looks):
+  // a reminder 96h before check-in (which also re-checks the card), automatic release of a booking still not guaranteed at its deadline,
+  // and automatic decline + refund of a request the hotel never answered before the guest was due to arrive.
+  const sweepStays = () => {
+    const at = new Date(); let changed = false;
+    for (const s of db.stays) {
+      if (!s.policy_tier || !['pending', 'confirmed'].includes(s.status)) continue;
+      const { room, bz } = stayCtx(s), name = bz?.name || 'the hotel';
+      if (s.policy_tier === TIERS.guarantee && !s.reminder_sent && s.reminder_at && at >= new Date(s.reminder_at)) {
+        s.reminder_sent = true; changed = true;
+        if (String(s.card?.token).startsWith('sbx_lapse_')) { s.guarantee = 'pending'; notify(s.user_id, { type: 'booking', title: `Your card could not be verified for ${name}`, body: `Add a valid card before ${localText(s.free_cancel_until)} (hotel local time) or the booking will be released automatically.`, link: '/bookings' }, true); }
+        else notify(s.user_id, { type: 'booking', title: `Reminder: free cancellation at ${name} ends in 24 hours`, body: `You can cancel for free until ${localText(s.free_cancel_until)} (hotel local time). After that, cancelling or not showing up charges ${peso(Math.round(s.total * POLICY.lateFeeRate * 100) / 100)} to your card.`, link: '/bookings' }, true);
+      }
+      if (s.policy_tier === TIERS.guarantee && s.guarantee === 'pending' && at > new Date(s.free_cancel_until)) {
+        s.status = 'cancelled'; s.guarantee = 'released'; s.cancelled_by = 'system'; s.cancelled_at = now(); changed = true;
+        notify(s.user_id, { type: 'booking', title: `Your booking at ${name} was released`, body: 'No valid card was on file by the deadline, so the room was released. Nothing was charged.', link: '/bookings' }, true);
+        if (bz) notify(bz.owner_id, { type: 'booking', title: `Booking released at ${name}`, body: `${stayText(s, room, stayCtx(s).guest)} · the guest did not keep a valid card on file`, link: ownerLink(bz) }, true);
+        continue;
+      }
+      if (s.status === 'pending' && at > Math.max(arrivalAt(s.check_in, ciTime(room)).getTime(), new Date(s.created_at).getTime() + POLICY.replyWindowHours * 36e5)) {
+        s.status = 'declined'; s.cancelled_by = 'system'; s.cancelled_at = now(); changed = true; const back = refundStay(s, 'the hotel did not reply before check-in');
+        notify(s.user_id, { type: 'booking', title: `Your booking request at ${name} expired`, body: back > 0 ? `The hotel did not reply in time. ${peso(back)} has been refunded to you in full.` : 'The hotel did not reply in time. Nothing was charged.', link: '/bookings' }, true);
+      }
+    }
+    return changed;
+  };
+  // ---- messages: a guest and the business (or transport provider) talk about one booking. Either side can start the conversation.
+  // They go to the business owner's account, so whoever manages that account reads and answers them.
+  const NOUN = { stay: 'booking', table: 'table reservation', ride: 'ride request', rental: 'rental request' };
+  const threadOf = (kind, id) => {
+    let rec, bizUser, link, label;
+    if (kind === 'stay') { rec = db.stays.find(x => x.id === id); const c = rec && stayCtx(rec); bizUser = c?.bz?.owner_id; link = c?.bz && ownerLink(c.bz); label = c?.bz?.name; }
+    else if (kind === 'table') { rec = db.tables.find(x => x.id === id); const c = rec && tableCtx(rec); bizUser = c?.bz?.owner_id; link = c?.bz && ownerLink(c.bz); label = c?.bz?.name; }
+    else if (kind === 'ride') { rec = db.rides.find(x => x.id === id); const pv = rec && db.providers.find(x => x.id === db.routes.find(r => r.id === rec.route_id)?.provider_id); bizUser = pv?.owner_id; link = '/dashboard'; label = pv?.name; }
+    else if (kind === 'rental') { rec = db.rentals.find(x => x.id === id); const pv = rec && db.providers.find(x => x.id === db.vehicles.find(v => v.id === rec.vehicle_id)?.provider_id); bizUser = pv?.owner_id; link = '/dashboard'; label = pv?.name; }
+    return rec && bizUser ? { guest: rec.user_id, bizUser, link, label: label || 'the business', noun: NOUN[kind] } : null;
+  };
+  const unread = (id, userId) => db.messages.filter(m => m.thread_id === id && m.to_user_id === userId && !m.read).length;
+  const openThread = (p, user) => { const t = threadOf(p[0], p[1]); need(t && (user.id === t.guest || user.id === t.bizUser), 'Conversation not found'); return t; };
+  R('GET', '/messages/:kind/:id', ({ p, user }) => { const t = openThread(p, user), mineG = user.id === t.guest;
+    return { with: mineG ? t.label : db.users.find(u => u.id === t.guest)?.full_name || 'Guest', noun: t.noun, messages: db.messages.filter(m => m.thread_id === p[1]).map(m => ({ id: m.id, mine: m.from_user_id === user.id, body: m.body, created_at: m.created_at })) }; }, []);
+  R('POST', '/messages/:kind/:id/read', ({ p, user }) => { openThread(p, user); db.messages.forEach(m => { if (m.thread_id === p[1] && m.to_user_id === user.id) m.read = true; }); }, []);
+  R('POST', '/messages/:kind/:id', ({ p, b, user }) => {
+    const t = openThread(p, user), body = String(b.body || '').trim(), fromGuest = user.id === t.guest, thread = db.messages.filter(m => m.thread_id === p[1]);
+    need(body.length >= 1 && body.length <= 1000, 'Write a message of up to 1,000 characters');
+    need(thread.length < 200, 'This conversation is full. Please call or email instead.');
+    let run = 0; for (let i = thread.length - 1; i >= 0 && thread[i].from_user_id === user.id; i--) run++;
+    need(run < 5, 'Please wait for a reply before sending more messages.'); // five in a row without an answer is enough
+    const to = fromGuest ? t.bizUser : t.guest, m = { id: uid(), thread_id: p[1], kind: p[0], from_user_id: user.id, to_user_id: to, body, created_at: now(), read: false }; db.messages.push(m);
+    notify(to, { type: 'message', title: fromGuest ? `${user.full_name} sent a message about their ${t.noun}` : `${t.label} sent you a message about your ${t.noun}`, body: body.length > 140 ? body.slice(0, 137) + '...' : body, link: fromGuest ? t.link : '/bookings' }, true);
+    return { id: m.id };
+  }, []);
   R('POST', '/bookings/reservation', ({ b, user }) => { const r = db.restaurants.find(x => x.id === b.restaurantId && x.accepts_reservations); need(r, 'This restaurant does not take reservations here'); need(new Date(b.reservedAt) > new Date(), 'Choose a future time'); need(Number(b.partySize) >= 1, 'Enter how many people are coming'); const t = { id: uid(), user_id: user.id, restaurant_id: r.id, reserved_at: b.reservedAt, party_size: Number(b.partySize), status: 'pending', created_at: now() }; db.tables.push(t); const { bz, guest } = tableCtx(t); notify(bz.owner_id, { type: 'reservation', title: `New table reservation at ${bz.name}`, body: tableText(t, guest), link: ownerLink(bz) }, true); }, []);
   R('POST', '/payments/:id/sandbox-confirm', ({ p, user }) => { const pay = db.payments.find(x => x.id === p[0] && x.user_id === user.id); need(pay, 'Payment not found'); if (pay.status !== 'pending') return { paid: false, sandbox: true }; pay.status = 'paid'; db.stays.filter(s => s.payment_id === pay.id && s.status === 'pending').forEach(s => { s.status = 'confirmed'; stayAlert(s, 'paid'); }); return { paid: true, sandbox: true }; }, []);
   R('GET', '/bookings/mine', ({ user }) => ({
-    stays: db.stays.filter(s => s.user_id === user.id).reverse().map(s => { const room = db.rooms.find(r => r.id === s.room_id), a = db.accommodations.find(x => x.id === room.accommodation_id), pay = db.payments.find(x => x.id === s.payment_id); return { id: s.id, check_in: s.check_in, check_out: s.check_out, total: s.total, status: s.status, payment_id: s.payment_id, payment_status: pay?.status, provider_ref: pay?.provider_ref, name: biz(a.business_id).name }; }),
-    rides: db.rides.filter(r => r.user_id === user.id).reverse().map(r => ({ ...r, driver_name: db.vehicles.find(v => v.id === r.vehicle_id)?.driver_name })),
-    tables: db.tables.filter(t => t.user_id === user.id).map(t => ({ ...t, name: biz(db.restaurants.find(r => r.id === t.restaurant_id).business_id).name })) }), []);
+    stays: db.stays.filter(s => s.user_id === user.id).reverse().map(s => { const room = db.rooms.find(r => r.id === s.room_id), a = db.accommodations.find(x => x.id === room.accommodation_id), pay = db.payments.find(x => x.id === s.payment_id); return { id: s.id, check_in: s.check_in, check_out: s.check_out, total: s.total, status: s.status, payment_id: s.payment_id, payment_status: pay?.status, provider_ref: pay?.provider_ref, name: biz(a.business_id).name, tier: s.policy_tier || null, charged: s.charged ?? null, card: s.card ? { brand: s.card.brand, last4: s.card.last4 } : null, guarantee: s.guarantee || null, free_cancel_until: s.free_cancel_until || null, fee_charged: s.fee_charged || 0, unread_messages: unread(s.id, user.id), cancelled_by: s.cancelled_by || null, terms: s.policy_tier && ['pending', 'confirmed'].includes(s.status) ? cancelTerms(s) : null }; }),
+    rides: db.rides.filter(r => r.user_id === user.id).reverse().map(r => ({ ...r, unread_messages: unread(r.id, user.id), driver_name: db.vehicles.find(v => v.id === r.vehicle_id)?.driver_name })),
+    tables: db.tables.filter(t => t.user_id === user.id).map(t => ({ ...t, unread_messages: unread(t.id, user.id), name: biz(db.restaurants.find(r => r.id === t.restaurant_id).business_id).name })) }), []);
   // ---- transport
   R('GET', '/transport/routes', ({ q }) => db.routes.filter(r => db.providers.find(p => p.id === r.provider_id)?.status === 'approved' && (!q.origin || r.origin.toLowerCase() === q.origin.toLowerCase())).map(r => ({ ...r, provider: db.providers.find(p => p.id === r.provider_id).name, provider_cover: db.providers.find(p => p.id === r.provider_id).cover_photo || null, vehicles: db.vehicles.filter(v => v.provider_id === r.provider_id && v.is_available) })));
   R('POST', '/transport/book', ({ b, user }) => {
     const rt = db.routes.find(r => r.id === b.routeId); need(rt && new Date(b.pickupAt) > new Date() && b.passengers >= 1, 'Check your ride details');
     const v = b.vehicleId && db.vehicles.find(x => x.id === b.vehicleId); if (b.vehicleId) need(v && v.capacity >= b.passengers, 'That vehicle cannot take your group');
-    const x = { id: uid(), user_id: user.id, route_id: rt.id, vehicle_id: v?.id ?? null, pickup: rt.origin, dropoff: rt.destination, pickup_at: b.pickupAt, passengers: b.passengers, luggage: b.luggage, fare: rt.fare, status: 'pending', created_at: now() }; db.rides.push(x); return { booking: { id: x.id, status: x.status } };
+    const x = { id: uid(), user_id: user.id, route_id: rt.id, vehicle_id: v?.id ?? null, pickup: rt.origin, dropoff: rt.destination, pickup_at: b.pickupAt, passengers: b.passengers, luggage: b.luggage, fare: rt.fare, status: 'pending', created_at: now() }; db.rides.push(x); const pvr = db.providers.find(y => y.id === rt.provider_id); if (pvr) notify(pvr.owner_id, { type: 'booking', title: `New ride request for ${pvr.name}`, body: `${user.full_name} · ${x.pickup} to ${x.dropoff} · ${when(x.pickup_at)} · ${x.passengers} passenger(s)`, link: '/dashboard' }, true); return { booking: { id: x.id, status: x.status } };
   }, []);
+  const SAID = { confirmed: 'accepted', rejected: 'declined' };
   R('GET', '/transport/provider/me', ({ user }) => { const p = provOf(user, false); if (!p) return { provider: null }; return { provider: p, page: provPage(p), vehicles: db.vehicles.filter(v => v.provider_id === p.id), routes: db.routes.filter(r => r.provider_id === p.id) }; }, ['transport_provider']);
   R('POST', '/transport/provider', ({ b, user }) => { need((b.name || '').length >= 2, 'Check your details'); const p = { id: uid(), owner_id: user.id, name: b.name, phone: b.phone, status: 'pending', created_at: now(), documents: [] }; db.providers.push(p); return { id: p.id, status: p.status }; }, ['transport_provider']);
   R('POST', '/transport/vehicles', ({ b, user }) => { const p = provOf(user); need(p, 'Your provider account is not approved yet'); need(b.type && b.capacity >= 1, 'Check vehicle details'); need(b.rentSelf != null || b.rentDriver != null || true, ''); const v = { id: uid(), provider_id: p.id, name: b.name || b.type, type: b.type, capacity: Number(b.capacity), plate_no: b.plateNo || '', driver_name: b.driverName || '', description: b.description || '', rent_self: nn(b.rentSelf), rent_driver: nn(b.rentDriver), is_available: true, ...vehPhotos(b) }; db.vehicles.push(v); return { id: v.id }; }, ['transport_provider']);
@@ -187,8 +299,8 @@ export function createBackend(io) {
     const photos = Array.isArray(b.photos) ? b.photos.filter(Boolean) : []; need(okRef(b.cover) && photos.every(okRef), 'One of the photos is not valid'); need(photos.length <= 40, 'An album can hold up to 40 photos'); const old = refs(pv);
     Object.assign(pv, { cover_photo: b.cover || null, photos, description: String(b.description || '').slice(0, 2000), address: String(b.address || '').slice(0, 200), phone: String(b.phone || '').slice(0, 60), hours_text: String(b.hoursText || '').slice(0, 200).trim() }); dropOrphans(old, pv); return provPage(pv); }, ['transport_provider']);
   R('POST', '/transport/routes', ({ b, user }) => { const p = provOf(user); need(p, 'Your provider account is not approved yet'); need(b.origin && b.destination && b.fare >= 0, 'Check route details'); const r = { id: uid(), provider_id: p.id, origin: b.origin, destination: b.destination, fare: b.fare, est_minutes: b.estMinutes ?? null }; db.routes.push(r); return { id: r.id }; }, ['transport_provider']);
-  R('GET', '/transport/provider/bookings', ({ user }) => { const p = provOf(user); if (!p) return []; const ids = db.routes.filter(r => r.provider_id === p.id).map(r => r.id); return db.rides.filter(r => ids.includes(r.route_id)).sort((a, b) => a.pickup_at.localeCompare(b.pickup_at)).map(r => ({ ...r, full_name: db.users.find(u => u.id === r.user_id)?.full_name, payment_status: 'not tracked in demo' })); }, ['transport_provider']);
-  R('PATCH', '/transport/bookings/:id', ({ p, b, user }) => { const pv = provOf(user); need(pv && ['confirmed', 'rejected', 'completed'].includes(b.status), 'Invalid request'); const r = db.rides.find(x => x.id === p[0] && db.routes.find(y => y.id === x.route_id)?.provider_id === pv.id); need(r, 'Booking not found'); r.status = b.status; }, ['transport_provider']);
+  R('GET', '/transport/provider/bookings', ({ user }) => { const p = provOf(user); if (!p) return []; const ids = db.routes.filter(r => r.provider_id === p.id).map(r => r.id); return db.rides.filter(r => ids.includes(r.route_id)).sort((a, b) => a.pickup_at.localeCompare(b.pickup_at)).map(r => ({ ...r, full_name: db.users.find(u => u.id === r.user_id)?.full_name, payment_status: 'not tracked in demo', unread_messages: unread(r.id, user.id) })); }, ['transport_provider']);
+  R('PATCH', '/transport/bookings/:id', ({ p, b, user }) => { const pv = provOf(user); need(pv && ['confirmed', 'rejected', 'completed'].includes(b.status), 'Invalid request'); const r = db.rides.find(x => x.id === p[0] && db.routes.find(y => y.id === x.route_id)?.provider_id === pv.id); need(r, 'Booking not found'); r.status = b.status; if (SAID[b.status]) notify(r.user_id, { type: 'booking', title: `Your ride request with ${pv.name} was ${SAID[b.status]}`, body: `${r.pickup} to ${r.dropoff} · ${when(r.pickup_at)}`, link: '/bookings' }, true); }, ['transport_provider']);
   // ---- business owner
   R('GET', '/owner/businesses', ({ user }) => db.businesses.filter(b => b.owner_id === user.id).map(b => { const v = ownerView(b); return { id: b.id, name: b.name, status: b.status, kind: v.kind, cover: v.cover, pending: v.stats.pending }; }), ['business_owner']);
   R('POST', '/owner/accommodations', ({ b, user }) => { need(mine(user, b.businessId) && b.type, 'Business not found or not approved yet'); const a = { id: uid(), business_id: b.businessId, type: b.type, amenities: b.amenities || [] }; db.accommodations.push(a); return { id: a.id }; }, ['business_owner']);
@@ -204,7 +316,7 @@ export function createBackend(io) {
   // ---- admin
   R('GET', '/admin/stats', () => ({ tourists: db.users.filter(u => u.role === 'tourist').length, businesses: db.businesses.filter(b => b.status === 'approved').length, pendingBusinesses: db.businesses.filter(b => b.status === 'pending').length, destinations: db.destinations.length, pointsIssued: db.points.filter(p => p.delta > 0).reduce((s, p) => s + p.delta, 0), redemptions: db.redemptions.length }), ['admin']);
   R('GET', '/admin/businesses/pending', () => db.businesses.filter(b => b.status === 'pending').map(b => ({ ...b, kind: kindOfBiz(b), papers: paperSummary(b, kindOfBiz(b)), owner_email: db.users.find(u => u.id === b.owner_id)?.email })), ['admin']);
-  R('PATCH', '/admin/businesses/:id/status', ({ p, b, user }) => { const x = biz(p[0]); need(x && ['approved', 'rejected', 'suspended'].includes(b.status), 'Invalid status'); need(b.status !== 'approved' || overall(x.documents, kindOfBiz(x)) === 'complete', 'Upload and verify all the required documents before approving this business.'); x.status = b.status; log(user, 'business.' + b.status, x.id); }, ['admin']);
+  R('PATCH', '/admin/businesses/:id/status', ({ p, b, user }) => { const x = biz(p[0]); need(x && ['approved', 'rejected', 'suspended'].includes(b.status), 'Invalid status'); need(b.status !== 'approved' || ['complete', 'not_required'].includes(overall(x.documents, kindOfBiz(x))), 'Upload and verify all the required documents before approving this business.'); x.status = b.status; log(user, 'business.' + b.status, x.id); }, ['admin']);
   R('GET', '/admin/providers/pending', () => db.providers.filter(p => p.status === 'pending').map(p => ({ ...p, papers: paperSummary(p, 'transport'), email: db.users.find(u => u.id === p.owner_id)?.email })), ['admin']);
   R('PATCH', '/admin/providers/:id/status', ({ p, b, user }) => { const x = db.providers.find(y => y.id === p[0]); need(x && ['approved', 'rejected', 'suspended'].includes(b.status), 'Invalid status'); need(b.status !== 'approved' || overall(x.documents, 'transport') === 'complete', 'Upload and verify all the required documents before approving this provider.'); x.status = b.status; log(user, 'provider.' + b.status, x.id); }, ['admin']);
   R('GET', '/admin/point-tiers', () => db.tiers, ['admin']);
@@ -288,9 +400,9 @@ export function createBackend(io) {
         add: (a, x) => { need((x.name || '').trim() && Number(x.capacity) >= 1 && x.pricePerNight !== '' && Number(x.pricePerNight) >= 0, 'Check the room details'); db.rooms.push({ id: uid(), accommodation_id: a.id, name: x.name.trim(), capacity: Number(x.capacity), price_per_night: Number(x.pricePerNight), quantity: Number(x.quantity) || 1 }); },
         del: (a, sid) => { db.stays = db.stays.filter(s => s.room_id !== sid); db.rooms = db.rooms.filter(r => !(r.id === sid && r.accommodation_id === a.id)); } } } },
     restaurants: {
-      list: () => db.restaurants,
+      list: () => db.restaurants.filter(r => r.type !== 'native'),
       view: (r) => { const b = biz(r.business_id); return { papers: paperSummary(b, 'restaurants'), id: r.id, title: b.name, sub: `${mn(b.municipality_id)} · ${(r.cuisines || []).join(', ') || 'no cuisine set'}`, status: b.status, ...bizView(b), cuisines: (r.cuisines || []).join(', '), priceRange: r.price_range, acceptsReservations: r.accepts_reservations, menu: db.menus.filter(m => m.restaurant_id === r.id).map(m => ({ id: m.id, text: `${m.item_name} · ₱${m.price}` })) }; },
-      create: (x, user) => { needBiz(x); const b = bizAdd(user, 'Restaurants'); bizApply(b, x); const r = { id: uid(), business_id: b.id, cuisines: tags(x.cuisines), price_range: nn(x.priceRange), accepts_reservations: !!x.acceptsReservations }; db.restaurants.push(r); return r; },
+      create: (x, user) => { needBiz(x); const b = bizAdd(user, 'Restaurants'); bizApply(b, x); const r = { id: uid(), business_id: b.id, type: 'restaurant', cuisines: tags(x.cuisines), price_range: nn(x.priceRange), accepts_reservations: !!x.acceptsReservations }; db.restaurants.push(r); return r; },
       update: (r, x) => { bizApply(biz(r.business_id), x); Object.assign(r, { cuisines: tags(x.cuisines), price_range: nn(x.priceRange), accepts_reservations: !!x.acceptsReservations }); },
       remove: (r) => { db.tables = db.tables.filter(t => t.restaurant_id !== r.id); db.menus = db.menus.filter(m => m.restaurant_id !== r.id); db.restaurants = db.restaurants.filter(y => y !== r); bizDrop(r.business_id); qrDrop(r.id, r.business_id); },
       subs: { menu: {
@@ -322,6 +434,15 @@ export function createBackend(io) {
       update: (r, x) => { need((x.name || '').trim().length >= 2 && Number(x.pointsCost) >= 1, 'Name and a points cost of at least 1 are required'); const old = refs(r); Object.assign(r, { name: x.name.trim(), description: x.description || '', points_cost: Number(x.pointsCost), stock: nn(x.stock), is_active: x.isActive !== false, ...photoFields(x) }); dropOrphans(old, r); },
       remove: (r) => { refs(r).forEach(deletePhoto); db.rewards = db.rewards.filter(y => y !== r); } },
   };
+  // Native delicacies: home-based food stops where everything is made to order. They give basic information only (no business papers),
+  // and they do not take table reservations. They are restaurants underneath (menu, photos, reviews, QR check-in all work).
+  const nativeFields = (x) => ({ cuisines: tags(x.delicacies), lead_time: String(x.leadTime || '').trim().slice(0, 60) || null, order_note: String(x.orderNote || '').trim().slice(0, 200) });
+  K.native = { ...K.restaurants,
+    list: () => db.restaurants.filter(r => r.type === 'native'),
+    view: (r) => { const b = biz(r.business_id); return { papers: paperSummary(b, 'native'), id: r.id, title: b.name, sub: `${mn(b.municipality_id)} · ${(r.cuisines || []).join(', ') || 'no delicacies listed yet'}`, status: b.status, ...bizView(b), delicacies: (r.cuisines || []).join(', '), leadTime: r.lead_time || '', orderNote: r.order_note || '', menu: db.menus.filter(m => m.restaurant_id === r.id).map(m => ({ id: m.id, text: `${m.item_name} · ₱${m.price}` })) }; },
+    create: (x, user) => { needBiz(x); const b = bizAdd(user, NATIVE_CAT); bizApply(b, x); const r = { id: uid(), business_id: b.id, type: 'native', price_range: null, accepts_reservations: false, ...nativeFields(x) }; db.restaurants.push(r); return r; },
+    update: (r, x) => { bizApply(biz(r.business_id), x); Object.assign(r, nativeFields(x), { accepts_reservations: false }); },
+  };
   const kd = (k) => { need(K[k], 'Unknown section'); return K[k]; };
   const found = (k, id) => { const e = kd(k).list().find(y => y.id === id); need(e, 'Not found'); return e; };
   R('GET', '/admin/manage/:kind', ({ p }) => kd(p[0]).list().map(kd(p[0]).view), ['admin']);
@@ -341,7 +462,7 @@ export function createBackend(io) {
   }
   const staysOf = (bz) => { const a = accOf(bz); return a ? db.stays.filter(s => db.rooms.find(r => r.id === s.room_id)?.accommodation_id === a.id) : []; };
   const tablesOf = (bz) => { const r = restOf(bz); return r ? db.tables.filter(t => t.restaurant_id === r.id) : []; };
-  const stayRow = (s) => { const { room, guest } = stayCtx(s), pay = db.payments.find(x => x.id === s.payment_id); return { kind: 'stay', id: s.id, guest: guest?.full_name || 'Guest', email: guest?.email || '', room: room?.name || '', check_in: String(s.check_in).slice(0, 10), check_out: String(s.check_out).slice(0, 10), nights: days(s.check_in, s.check_out), guests: s.guests, total: s.total, status: s.status, payment: pay?.status || '', created_at: s.created_at || '' }; };
+  const stayRow = (s) => { const { room, guest } = stayCtx(s), pay = db.payments.find(x => x.id === s.payment_id); return { kind: 'stay', id: s.id, guest: guest?.full_name || 'Guest', email: guest?.email || '', room: room?.name || '', check_in: String(s.check_in).slice(0, 10), check_out: String(s.check_out).slice(0, 10), nights: days(s.check_in, s.check_out), guests: s.guests, total: s.total, status: s.status, payment: pay?.status || '', created_at: s.created_at || '', tier: s.policy_tier || null, charged: s.charged ?? null, card: s.card ? { brand: s.card.brand, last4: s.card.last4 } : null, guarantee: s.guarantee || null, free_cancel_until: s.free_cancel_until || null, fee_charged: s.fee_charged || 0, can_no_show: !!s.policy_tier && s.status === 'confirmed' && canMarkNoShow(String(s.check_in).slice(0, 10)) }; };
   const tableRow = (t) => { const { guest } = tableCtx(t); return { kind: 'table', id: t.id, guest: guest?.full_name || 'Guest', email: guest?.email || '', reserved_at: t.reserved_at, party_size: t.party_size, status: t.status, created_at: t.created_at || t.reserved_at }; };
   const ownerView = (bz) => {
     const k = kindOfBiz(bz), a = accOf(bz), r = restOf(bz), today = now().slice(0, 10), stays = staysOf(bz), tables = tablesOf(bz);
@@ -374,7 +495,30 @@ export function createBackend(io) {
   const ownRoom = (user, id) => { const rm = db.rooms.find(x => x.id === id), a = rm && db.accommodations.find(x => x.id === rm.accommodation_id), bz = a && biz(a.business_id); return bz && bz.owner_id === user.id ? { rm, bz } : null; };
   R('POST', '/owner/business/:id/rooms', ({ p, b, user }) => { const bz = own(user, p[0]); need(bz, 'Business not found'); need(ensureDetail(bz) === 'stays', 'Rooms are for hotels, inns and other stays'); db.rooms.push({ id: uid(), accommodation_id: accOf(bz).id, ...roomIn(b) }); return ownerView(bz); }, ['business_owner']);
   R('PUT', '/owner/rooms/:id', ({ p, b, user }) => { const x = ownRoom(user, p[0]); need(x, 'Room not found'); Object.assign(x.rm, roomIn(b)); return ownerView(x.bz); }, ['business_owner']);
-  R('DELETE', '/owner/rooms/:id', ({ p, user }) => { const x = ownRoom(user, p[0]); need(x, 'Room not found'); need(!db.stays.some(s => s.room_id === x.rm.id), 'This room has booking history, so it cannot be deleted. Set its units to 0 to stop offering it.'); db.rooms = db.rooms.filter(r => r !== x.rm); return ownerView(x.bz); }, ['business_owner']);
+  // ---- owner availability: see who is in each room on each date, and close dates for walk-ins, repairs or rooms sold elsewhere
+  R('GET', '/owner/business/:id/availability', ({ p, q, user }) => {
+    const bz = own(user, p[0]); need(bz, 'Business not found'); const a = accOf(bz); need(a, 'Only places to stay have rooms to manage');
+    const { from, n } = window_(q), dates = Array.from({ length: n }, (_, i) => addDay(from, i)), today = localDate(), rooms = db.rooms.filter(r => r.accommodation_id === a.id), name = (id) => db.users.find(u => u.id === id)?.full_name || 'Guest';
+    const row = (r, d) => { const u = roomUse(r, d), blocked = u.blocks.reduce((t, x) => t + x.units, 0); return { booked: u.stays.length, blocked, free: Math.max(0, r.quantity - u.stays.length - blocked), stays: u.stays.map(s => ({ id: s.id, guest: name(s.user_id), status: s.status, check_in: String(s.check_in).slice(0, 10), check_out: String(s.check_out).slice(0, 10), guests: s.guests })), blocks: u.blocks.map(x => ({ id: x.id, units: x.units, reason: x.reason, start: x.start, last_night: addDay(x.end, -1) })) }; };
+    return { from, today,
+      tonight: rooms.map(r => ({ id: r.id, name: r.name, quantity: r.quantity, ...(({ booked, blocked, free }) => ({ booked, blocked, free }))(row(r, today)) })),
+      rooms: rooms.map(r => ({ id: r.id, name: r.name, quantity: r.quantity, days: Object.fromEntries(dates.map(d => [d, row(r, d)])) })),
+      blocks: db.blocks.filter(x => rooms.some(r => r.id === x.room_id) && x.end > today).sort((x, y) => x.start.localeCompare(y.start)).map(x => ({ id: x.id, room: rooms.find(r => r.id === x.room_id).name, units: x.units, reason: x.reason, start: x.start, last_night: addDay(x.end, -1) })) };
+  }, ['business_owner']);
+  R('POST', '/owner/business/:id/blocks', ({ p, b, user }) => {
+    const bz = own(user, p[0]); need(bz, 'Business not found'); const a = accOf(bz), room = a && db.rooms.find(r => r.id === b.roomId && r.accommodation_id === a.id); need(room, 'Room not found');
+    need(isDate(b.start) && isDate(b.lastNight) && b.lastNight >= b.start, 'Choose the first night and the last night'); need(b.start >= localDate(), 'You can only close dates from today onward');
+    const end = addDay(b.lastNight, 1); need(days(b.start, end) <= 366, 'Close up to one year at a time');
+    const units = Math.floor(Number(b.units) || 1); need(units >= 1 && units <= room.quantity, `Choose 1 to ${room.quantity} room${room.quantity === 1 ? '' : 's'}`);
+    const clash = nightsOf(b.start, end).filter(d => room.quantity - usedOn(room, d) < units);
+    need(!clash.length, `Not enough free rooms on ${clash.slice(0, 3).map(dshort).join(', ')}${clash.length > 3 ? ` and ${clash.length - 3} more night${clash.length - 3 === 1 ? '' : 's'}` : ''}. Decline or cancel the bookings on those nights first.`);
+    const x = { id: uid(), room_id: room.id, start: b.start, end, units, reason: String(b.reason || '').trim().slice(0, 80), created_at: now() }; db.blocks.push(x); log(user, 'room.close', x.id); return { id: x.id };
+  }, ['business_owner']);
+  R('DELETE', '/owner/blocks/:id', ({ p, user }) => {
+    const x = db.blocks.find(y => y.id === p[0]), room = x && db.rooms.find(r => r.id === x.room_id), a = room && db.accommodations.find(z => z.id === room.accommodation_id);
+    need(a && biz(a.business_id).owner_id === user.id, 'Closed dates not found'); db.blocks = db.blocks.filter(y => y !== x); log(user, 'room.reopen', x.id); return { ok: true };
+  }, ['business_owner']);
+  R('DELETE', '/owner/rooms/:id', ({ p, user }) => { const x = ownRoom(user, p[0]); need(x, 'Room not found'); need(!db.stays.some(s => s.room_id === x.rm.id), 'This room has booking history, so it cannot be deleted. Set its units to 0 to stop offering it.'); db.rooms = db.rooms.filter(r => r !== x.rm); db.blocks = db.blocks.filter(k => k.room_id !== x.rm.id); return ownerView(x.bz); }, ['business_owner']);
   // menu (restaurants)
   const menuIn = (b) => { const name = String(b.name ?? b.itemName ?? '').trim().slice(0, 100), price = Number(b.price); need(name && b.price !== '' && b.price != null && price >= 0, 'Check the dish name and price'); return { item_name: name, price, description: String(b.description || '').slice(0, 300) }; };
   const ownMenu = (user, id) => { const m = db.menus.find(x => x.id === id), r = m && db.restaurants.find(x => x.id === m.restaurant_id), bz = r && biz(r.business_id); return bz && bz.owner_id === user.id ? { m, bz } : null; };
@@ -388,15 +532,24 @@ export function createBackend(io) {
   R('PUT', '/owner/products/:id', ({ p, b, user }) => { const o = ownProd(user, p[0]); need(o, 'Product not found'); const next = prodIn(b); if (o.x.photo && o.x.photo !== next.photo) deletePhoto(o.x.photo); Object.assign(o.x, next); return ownerView(o.bz); }, ['business_owner']);
   R('DELETE', '/owner/products/:id', ({ p, user }) => { const o = ownProd(user, p[0]); need(o, 'Product not found'); if (o.x.photo) deletePhoto(o.x.photo); db.products = db.products.filter(y => y !== o.x); return ownerView(o.bz); }, ['business_owner']);
   // reservations: stay bookings and table reservations for this business, and what the owner can do with each
-  const MOVES = { stay: { pending: ['confirmed', 'declined', 'cancelled'], confirmed: ['completed', 'cancelled'] }, table: { pending: ['confirmed', 'declined', 'cancelled'], confirmed: ['completed', 'no_show', 'cancelled'] } };
-  R('GET', '/owner/business/:id/reservations', ({ p, user }) => { const bz = own(user, p[0]); need(bz, 'Business not found'); return [...staysOf(bz).map(stayRow), ...tablesOf(bz).map(tableRow)].sort((x, y) => String(y.created_at).localeCompare(String(x.created_at))); }, ['business_owner']);
+  const MOVES = { stay: { pending: ['confirmed', 'declined', 'cancelled'], confirmed: ['completed', 'no_show', 'cancelled'] }, table: { pending: ['confirmed', 'declined', 'cancelled'], confirmed: ['completed', 'no_show', 'cancelled'] } };
+  R('GET', '/owner/business/:id/reservations', ({ p, user }) => { const bz = own(user, p[0]); need(bz, 'Business not found'); return [...staysOf(bz).map(x => ({ ...stayRow(x), unread_messages: unread(x.id, user.id) })), ...tablesOf(bz).map(x => ({ ...tableRow(x), unread_messages: unread(x.id, user.id) }))].sort((x, y) => String(y.created_at).localeCompare(String(x.created_at))); }, ['business_owner']);
   R('PATCH', '/owner/reservations/:kind/:id', ({ p, b, user }) => {
     const [kind, id] = p; need(Object.hasOwn(MOVES, kind), 'Unknown reservation type');
     const rec = (kind === 'stay' ? db.stays : db.tables).find(x => x.id === id), bz = rec && (kind === 'stay' ? stayCtx(rec).bz : tableCtx(rec).bz);
     need(bz && bz.owner_id === user.id, 'Reservation not found');
     need((MOVES[kind][rec.status] || []).includes(b.status), `A ${rec.status} reservation cannot be changed to ${b.status}`);
+    let money = '';
+    if (kind === 'stay') {
+      if (b.status === 'no_show') need(rec.policy_tier, 'A no-show can only be recorded on a booking made under the booking policy.');
+      if (rec.policy_tier) {
+        if (b.status === 'confirmed') need(rec.guarantee !== 'pending', 'This booking is not guaranteed yet: the guest has to add a valid card first.');
+        if (b.status === 'no_show') { need(canMarkNoShow(String(rec.check_in).slice(0, 10)), `A no-show can be marked only after ${POLICY.noShowAfter} on the check-in day.`); const fee = chargeCard(rec, noShowFee(rec), 'no-show'); money = fee > 0 ? `${peso(fee)} was charged to the card on file.` : `The ${peso(rec.charged)} already paid is kept by the hotel.`; }
+        if (['declined', 'cancelled'].includes(b.status)) { const back = refundStay(rec, `the hotel ${b.status} the booking`); money = back > 0 ? `${peso(back)} has been refunded to you in full.` : 'Nothing was charged.'; rec.cancelled_by = 'hotel'; }
+      }
+    }
     rec.status = b.status; log(user, `${kind}.${b.status}`, rec.id);
-    if (kind === 'stay') { const { room, guest } = stayCtx(rec); guestAlert(rec.user_id, bz, 'booking', b.status, stayText(rec, room, guest)); return stayRow(rec); }
+    if (kind === 'stay') { const { room, guest } = stayCtx(rec); guestAlert(rec.user_id, bz, 'booking', b.status, stayText(rec, room, guest) + (money ? ' · ' + money : ''), STAY_WORDS); return stayRow(rec); }
     const { guest } = tableCtx(rec); guestAlert(rec.user_id, bz, 'table reservation', b.status, tableText(rec, guest)); return tableRow(rec);
   }, ['business_owner']);
   // notifications for any signed-in person
@@ -420,12 +573,13 @@ export function createBackend(io) {
     if (b.mode === 'self') need(b.licenseOk, "Self-drive renters must confirm they hold a valid driver's license"); need(!clash(v.id, b.start, b.end), 'This vehicle is already booked on those dates');
     const n = days(b.start, b.end) + 1, total = rate * n, pay = { id: uid(), user_id: user.id, amount: total, provider_ref: 'SBX-' + rnd(12), status: 'pending' }; db.payments.push(pay);
     const r = { id: uid(), user_id: user.id, vehicle_id: v.id, mode: b.mode, start_date: b.start, end_date: b.end, days: n, destinations: b.destinations, pickup: b.pickup || '', passengers: Number(b.passengers), total, status: 'pending', payment_id: pay.id, created_at: now() }; db.rentals.push(r);
+    const pvr = db.providers.find(y => y.id === v.provider_id); if (pvr) notify(pvr.owner_id, { type: 'booking', title: `New rental request for ${pvr.name}`, body: `${user.full_name} · ${v.name || v.type} · ${r.start_date} to ${r.end_date} · ₱${total.toLocaleString('en-PH')}`, link: '/dashboard' }, true);
     return { rental: { id: r.id, status: r.status, total }, payment: pay };
   }, []);
-  R('GET', '/rentals/mine', ({ user }) => db.rentals.filter(r => r.user_id === user.id).reverse().map(rentRow), []);
+  R('GET', '/rentals/mine', ({ user }) => db.rentals.filter(r => r.user_id === user.id).reverse().map(r => ({ ...rentRow(r), unread_messages: unread(r.id, user.id) })), []);
   R('POST', '/rentals/:id/cancel', ({ p, user }) => { const r = db.rentals.find(x => x.id === p[0] && x.user_id === user.id && ['pending', 'confirmed'].includes(x.status) && x.start_date > now().slice(0, 10)); need(r, 'This rental can no longer be cancelled'); r.status = 'cancelled'; }, []);
-  R('GET', '/transport/provider/rentals', ({ user }) => { const pv = provOf(user); if (!pv) return []; const ids = db.vehicles.filter(v => v.provider_id === pv.id).map(v => v.id); return db.rentals.filter(r => ids.includes(r.vehicle_id)).map(rentRow).sort((a, b) => a.start_date.localeCompare(b.start_date)); }, ['transport_provider']);
-  R('PATCH', '/transport/rentals/:id', ({ p, b, user }) => { const pv = provOf(user); need(pv && ['confirmed', 'rejected', 'completed'].includes(b.status), 'Invalid request'); const r = db.rentals.find(x => x.id === p[0] && db.vehicles.find(v => v.id === x.vehicle_id)?.provider_id === pv.id); need(r, 'Rental not found'); r.status = b.status; }, ['transport_provider']);
+  R('GET', '/transport/provider/rentals', ({ user }) => { const pv = provOf(user); if (!pv) return []; const ids = db.vehicles.filter(v => v.provider_id === pv.id).map(v => v.id); return db.rentals.filter(r => ids.includes(r.vehicle_id)).map(r => ({ ...rentRow(r), unread_messages: unread(r.id, user.id) })).sort((a, b) => a.start_date.localeCompare(b.start_date)); }, ['transport_provider']);
+  R('PATCH', '/transport/rentals/:id', ({ p, b, user }) => { const pv = provOf(user); need(pv && ['confirmed', 'rejected', 'completed'].includes(b.status), 'Invalid request'); const r = db.rentals.find(x => x.id === p[0] && db.vehicles.find(v => v.id === x.vehicle_id)?.provider_id === pv.id); need(r, 'Rental not found'); r.status = b.status; if (SAID[b.status]) notify(r.user_id, { type: 'booking', title: `Your rental request with ${pv.name} was ${SAID[b.status]}`, body: `${db.vehicles.find(v => v.id === r.vehicle_id)?.name || 'Vehicle'} · ${r.start_date} to ${r.end_date}`, link: '/bookings' }, true); }, ['transport_provider']);
 
   R('PUT', '/admin/manage/:kind/:id/:sub/:subId', ({ p, b }) => { const e = found(p[0], p[1]), s = kd(p[0]).subs?.[p[2]]; need(s?.upd, 'This item cannot be edited'); s.upd(e, p[3], b); return kd(p[0]).view(e); }, ['admin']);
 
@@ -470,7 +624,7 @@ export function createBackend(io) {
   R('GET', '/admin/business-report', ({ q }) => {
     const rows = [], who = (o) => db.users.find(u => u.id === o.owner_id);
     const add = (type, kind, o, detail) => { const docs = o.documents || [], u = who(o); rows.push({ id: o.id, name: o.name, type, kind, detail, municipality: o.municipality_id ? mn(o.municipality_id) : '', address: o.address || '', phone: o.phone || '', owner: u?.full_name || '', email: u?.email || '', status: o.status, registered: (o.created_at || '').slice(0, 10), papers: overall(docs, REQUIRED[kind] ? kind : 'shops'), papers_detail: REQUIRED[kind].map(t => `${DOC_LABELS[t].split(' (')[0]}: ${typeState(docs, t)}`).join('; ') }); };
-    db.accommodations.forEach(a => add('Stay', 'stays', biz(a.business_id), a.type)); db.restaurants.forEach(r => add('Eat', 'restaurants', biz(r.business_id), (r.cuisines || []).join(', ')));
+    db.accommodations.forEach(a => add('Stay', 'stays', biz(a.business_id), a.type)); db.restaurants.forEach(r => add(r.type === 'native' ? 'Native delicacies' : 'Eat', restKind(r), biz(r.business_id), (r.cuisines || []).join(', ')));
     K.businesses.list().forEach(o => add('Shop', 'shops', o, o.category || '')); db.providers.forEach(o => add('Transport', 'transport', o, `${db.vehicles.filter(v => v.provider_id === o.id).length} vehicle(s)`));
     const t = q.type || 'all', st = q.status || 'all', pp = q.papers || 'all';
     return { generated: now(), rows: rows.filter(r => (t === 'all' || r.kind === t) && (st === 'all' || r.status === st) && (pp === 'all' || r.papers === pp)).sort((a, b) => a.type.localeCompare(b.type) || a.name.localeCompare(b.name)) };

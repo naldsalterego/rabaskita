@@ -1,10 +1,10 @@
 import { useState } from 'react';
-import { ShieldCheck, CheckCircle2, Clock, AlertTriangle, XCircle, FileText, Trash2, UploadCloud, Eye, EyeOff } from 'lucide-react';
+import { Info, ShieldCheck, CheckCircle2, Clock, AlertTriangle, XCircle, FileText, Trash2, UploadCloud, Eye, EyeOff } from 'lucide-react';
 import { api } from '../lib/api.js';
 import { photoUrl, saveDocument } from '../lib/photos.js';
 import { useLoad, btn, inp } from './ui.jsx';
 const STATE = { verified: ['Verified', CheckCircle2, 'text-teal'], review: ['Waiting for review', Clock, 'text-amber-600'], expired: ['Expired', AlertTriangle, 'text-red-700'], missing: ['Missing', XCircle, 'text-ocean/35'] };
-const OVERALL = { complete: ['All required papers are verified by the tourism office.', 'border-teal/30 bg-teal/10 text-teal', ShieldCheck], review: ['Papers were submitted and are waiting for the tourism office to verify them.', 'border-amber-200 bg-amber-50 text-amber-900', Clock], incomplete: ['Some required papers are missing or expired.', 'border-line bg-slate-100 text-ocean/80', AlertTriangle] };
+const OVERALL = { complete: ['All required papers are verified by the tourism office.', 'border-teal/30 bg-teal/10 text-teal', ShieldCheck], review: ['Papers were submitted and are waiting for the tourism office to verify them.', 'border-amber-200 bg-amber-50 text-amber-900', Clock], incomplete: ['Some required papers are missing or expired.', 'border-line bg-slate-100 text-ocean/80', AlertTriangle], not_required: ['This is a home-based, made-to-order food stop. It is not asked for business papers.', 'border-line bg-white text-ocean/80', Info] };
 
 export const PaperChip = () => <span className="mt-1 inline-flex items-center gap-1 rounded-full bg-teal/10 px-2 py-0.5 text-xs font-semibold text-teal"><ShieldCheck size={12} />Papers complete</span>;
 export function PaperLine({ p }) { if (!p) return null; const tone = { complete: 'text-teal', review: 'text-amber-700', incomplete: 'text-ocean/60' }[p.status]; return <p className={`mt-1 inline-flex items-center gap-1 text-xs font-medium ${tone}`}><ShieldCheck size={13} />Papers: {p.have} of {p.need} verified{p.status === 'complete' ? ' · complete' : ''}</p>; }
@@ -22,7 +22,7 @@ export function PapersPublic({ papers }) {
       <span className="flex items-center gap-2"><I size={18} className={tone} /><span><b>{r.label}</b>{d?.number && <span className="text-ocean/60"> · No. {d.number}</span>}{d?.expires && <span className="text-ocean/60"> · valid until {when(d.expires)}</span>}</span></span>
       <span className="flex items-center gap-3"><span className={`text-xs font-semibold ${tone}`}>{lab}</span>{d?.file && <ViewDoc file={d.file} />}</span></li>); })}</ul>
     {papers.other.length > 0 && <ul className="grid gap-1 text-sm text-ocean/75">{papers.other.map(d => <li key={d.id} className="flex flex-wrap items-center gap-2"><FileText size={14} />{d.label}{d.expires && ` · valid until ${when(d.expires)}`} {d.file && <ViewDoc file={d.file} />}</li>)}</ul>}
-    <p className="text-xs text-ocean/55">Papers are checked by the tourism office. This is not a guarantee, so please do your own checks too.</p></div>);
+    {papers.status !== 'not_required' && <p className="text-xs text-ocean/55">Papers are checked by the tourism office. This is not a guarantee, so please do your own checks too.</p>}</div>);
 }
 
 // Upload, review and manage papers. `base` is the API path; `admin` adds verify / visibility / delete-any.

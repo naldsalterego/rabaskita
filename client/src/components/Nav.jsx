@@ -4,8 +4,7 @@ import Brand from './Brand.jsx';
 import { useBranding, DEFAULT_LOGO } from '../lib/branding.js';
 import { photoUrl } from '../lib/photos.js';
 import { Compass, BedDouble, Utensils, Backpack, Route as RouteIcon, Gift, Store, LogIn, UserPlus, Menu, X, LayoutDashboard, Ticket, LogOut, Bell } from 'lucide-react';
-import { api } from '../lib/api.js';
-import { useLoad } from './ui.jsx';
+import { useUnread } from '../lib/unread.js';
 // [label, path, icon, color classes used when the tile is active]
 const ITEMS = [['Explore', '/explore', Compass, 'bg-coral'], ['Stays', '/accommodations', BedDouble, 'bg-sky'], ['Eat', '/restaurants', Utensils, 'bg-tang'], ['Roam', '/transportation', Backpack, 'bg-leaf'], ['Planner', '/itinerary', RouteIcon, 'bg-rose'], ['Rewards', '/rewards', Gift, 'bg-teal'], ['Shops', '/businesses', Store, 'bg-ocean']];
 const out = () => { localStorage.removeItem('token'); localStorage.removeItem('user'); location.href = '/'; };
@@ -20,7 +19,7 @@ function Tile({ to, label, Icon, on, solid, onClick, big, badge }) {
 }
 
 // Bell tile: shows how many alerts are unread. Only rendered for signed-in people.
-function Alerts({ onClick }) { const [d] = useLoad(() => api('/notifications')); return <Tile to="/notifications" label="Alerts" Icon={Bell} on="bg-teal" badge={d?.unread || 0} onClick={onClick} />; }
+function Alerts({ onClick }) { const unread = useUnread(); return <Tile to="/notifications" label="Alerts" Icon={Bell} on="bg-teal" badge={unread} onClick={onClick} />; }
 
 function Account({ u }) {
   const [open, setOpen] = useState(false); const item = 'flex w-full items-center gap-2 whitespace-nowrap rounded-xl px-3 py-2 text-left hover:bg-foam';

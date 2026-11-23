@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
-import { LayoutDashboard, Paintbrush, BedDouble, Utensils, ShoppingBag, CalendarCheck, FileCheck, ExternalLink, QrCode, Check, Circle, Clock, Coins, ListChecks } from 'lucide-react';
+import { LayoutDashboard, Paintbrush, BedDouble, Utensils, ShoppingBag, CalendarCheck, FileCheck, ExternalLink, QrCode, Check, Circle, Clock, Coins, ListChecks, CalendarDays } from 'lucide-react';
 import { api, openQr } from '../lib/api.js';
 import { Card, Stat, Badge, useLoad, btn, btnGhost } from '../components/ui.jsx';
 import Cover from '../components/Cover.jsx';
@@ -10,10 +10,11 @@ import { CountBadge, albumOf } from '../components/Album.jsx';
 import PageEditor from '../components/owner/PageEditor.jsx';
 import ItemsPanel from '../components/owner/ItemsPanel.jsx';
 import Reservations from '../components/owner/Reservations.jsx';
+import Availability from '../components/owner/Availability.jsx';
 const OFFER = { stays: ['offer', 'Rooms', BedDouble], restaurants: ['offer', 'Menu', Utensils], shops: ['offer', 'Products', ShoppingBag] };
-const tabsFor = (b) => [['overview', 'Overview', LayoutDashboard], ['page', 'My page', Paintbrush], OFFER[b.kind], ...(b.kind === 'shops' ? [] : [['reservations', 'Reservations', CalendarCheck]]), ['papers', 'Papers', FileCheck]];
+const tabsFor = (b) => [['overview', 'Overview', LayoutDashboard], ['page', 'My page', Paintbrush], OFFER[b.kind], ...(b.kind === 'shops' ? [] : [['reservations', 'Reservations', CalendarCheck]]), ...(b.kind === 'stays' ? [['availability', 'Availability', CalendarDays]] : []), ['papers', 'Papers', FileCheck]];
 const FIELDS = {
-  rooms: [{ k: 'name', label: 'Room name', req: 1 }, { k: 'capacity', label: 'Sleeps (guests)', type: 'number', req: 1 }, { k: 'pricePerNight', label: 'Price per night (₱)', type: 'number', req: 1 }, { k: 'quantity', label: 'Units you have (0 pauses this room)', type: 'number' }],
+  rooms: [{ k: 'name', label: 'Room name', req: 1 }, { k: 'capacity', label: 'Sleeps (guests)', type: 'number', req: 1 }, { k: 'pricePerNight', label: 'Price per night (₱, final price with taxes and fees)', type: 'number', req: 1 }, { k: 'quantity', label: 'Units you have (0 pauses this room)', type: 'number' }],
   menu: [{ k: 'name', label: 'Dish or drink', req: 1 }, { k: 'price', label: 'Price (₱)', type: 'number', req: 1 }, { k: 'description', label: 'Short description (optional)', type: 'textarea' }],
   products: [{ k: 'name', label: 'Product name', req: 1 }, { k: 'price', label: 'Price (₱)', type: 'number', req: 1 }, { k: 'description', label: 'Short description (optional)', type: 'textarea' }, { k: 'photo', label: 'Product photo (optional)', type: 'image', empty: 'No photo yet.', upload: 'Upload product photo', replace: 'Change photo', removeLabel: 'Remove photo' }],
 };
@@ -58,6 +59,7 @@ export default function OwnerBusiness({ id, tab, setTab, onListChanged }) {
       {cur === 'offer' && b.kind === 'shops' && <Card title="Products"><ItemsPanel noun="product" items={b.products} fields={FIELDS.products} hint="Show tourists what you sell. Prices are for information; tourists pay you in the shop." empty="No products yet. Add what you sell below."
         initialOf={p => ({ name: p.name, price: p.price, description: p.description, photo: p.photo })} addPath={`/owner/business/${b.id}/products`} itemPath={pid => `/owner/products/${pid}`} onChange={changed}
         row={p => <>{p.photo ? <Photo src={p.photo} alt="" className="h-12 w-12 shrink-0 rounded-xl object-cover" /> : <span className="grid h-12 w-12 shrink-0 place-items-center rounded-xl bg-foam text-ocean/40"><ShoppingBag size={18} /></span>}<div className="min-w-0"><p className="font-medium">{p.name} · ₱{p.price.toLocaleString()}</p>{p.description && <p className="text-ocean/70">{p.description}</p>}</div></>} /></Card>}
+      {cur === 'availability' && b.kind === 'stays' && <Card title="Room availability"><Availability key={b.id} businessId={b.id} /></Card>}
       {cur === 'reservations' && <Card title={b.kind === 'stays' ? 'Bookings and reservations' : 'Table reservations'}>{b.kind === 'restaurants' && !b.acceptsReservations && <p className="mb-3 rounded-xl bg-foam p-3 text-sm">Online table reservations are off, so tourists cannot reserve yet. <button className="underline" onClick={() => setTab('page')}>Turn them on under My page</button>.</p>}<Reservations businessId={b.id} onChanged={changed} /></Card>}
       {cur === 'papers' && <Card title="Business papers"><p className="mb-3 rounded-xl bg-foam p-3 text-sm">The tourism office checks these before your business is approved. Tourists can see which papers are verified. <Link className="underline" to="/join">Get the application form</Link>.</p><DocsPanel base={`/owner/docs/${b.id}`} onChange={changed} /></Card>}
     </div>

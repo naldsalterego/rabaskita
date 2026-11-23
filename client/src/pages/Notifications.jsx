@@ -1,11 +1,12 @@
 import { Link, useNavigate } from 'react-router-dom';
-import { Bell, CalendarCheck, Utensils, BedDouble } from 'lucide-react';
+import { Bell, CalendarCheck, Utensils, BedDouble, MessageSquare } from 'lucide-react';
 import { api } from '../lib/api.js';
 import { PageHeader, Empty, useLoad, btnGhost } from '../components/ui.jsx';
-const ICON = { booking: BedDouble, reservation: Utensils };
+import { refreshUnread } from '../lib/unread.js';
+const ICON = { booking: BedDouble, reservation: Utensils, message: MessageSquare };
 export default function Notifications() {
   const [d, reload, err] = useLoad(() => api('/notifications')), go = useNavigate();
-  const read = async (id) => { await api('/notifications/read', { method: 'POST', body: id ? { id } : {} }).catch(() => {}); reload(); };
+  const read = async (id) => { await api('/notifications/read', { method: 'POST', body: id ? { id } : {} }).catch(() => {}); reload(); refreshUnread(); };
   if (err && !d) return <main className="mx-auto max-w-3xl px-4 py-10"><Empty>{err.includes('Sign in') ? <>Please <Link className="underline" to="/login">sign in</Link> to see your alerts.</> : err}</Empty></main>;
   if (!d) return <p className="p-8">Loading…</p>;
   return (<main className="mx-auto max-w-3xl px-4 py-6"><PageHeader title="Alerts" sub="Bookings, reservations and replies about them." />
