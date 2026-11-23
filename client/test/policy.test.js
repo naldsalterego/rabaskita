@@ -6,6 +6,10 @@ import { createBackend, seed } from '../src/lib/backend.js';
 
 const fails = (p, re) => assert.rejects(p, re);
 const H = 36e5, CARD = { token: 'sbx_ok_4242', brand: 'Visa', last4: '4242', expMonth: 12, expYear: 2040 };
+const ID = { idPhoto: 'idb:test-id-photo-0001', idConsent: true };
+// Roam requests the way the site sends them: ask for today's terms, then confirm exactly those terms with a card and a photo of an ID.
+const rideReq = async (h, body, path = '/transport/book') => { const q = await h('GET', `/transport/ride-quote?${body.routeId ? 'routeId=' + body.routeId : `vehicleId=${body.vehicleId}&from=${encodeURIComponent(body.from)}&to=${encodeURIComponent(body.to)}`}&pickupAt=${encodeURIComponent(body.pickupAt)}`); return h('POST', path, { ...body, acceptPolicy: true, card: CARD, ...ID, expect: { fare: q.fare } }); };
+const rentReq = async (h, body) => { const q = await h('GET', `/rentals/quote?vehicleId=${body.vehicleId}&mode=${body.mode}&start=${body.start}&end=${body.end}`); return h('POST', '/rentals/book', { ...body, acceptPolicy: true, card: CARD, ...ID, expect: { tier: q.tier, dueNow: q.dueNow } }); };
 const LAPSE = { token: 'sbx_lapse_0341', brand: 'Visa', last4: '0341', expMonth: 12, expYear: 2040 };
 const addDays = (d, n) => new Date(new Date(d + 'T00:00:00Z').getTime() + n * 864e5).toISOString().slice(0, 10);
 // the first check-in date, counting from today, that falls in the given tier right now
@@ -55,7 +59,7 @@ const mkBackend = () => {
   return { h: be.handle, get db() { return db; }, as: async (who) => { tok = (await be.handle('POST', '/auth/login', { email: who + '@demo.test', password: 'demo1234' })).token; } };
 };
 const room = (t, name) => t.db.rooms.find(r => r.name === name).id;
-const book = async (t, roomId, ci, co, extra = {}) => { const q = await t.h('GET', `/bookings/quote?roomId=${roomId}&checkIn=${ci}&checkOut=${co}`); return t.h('POST', '/bookings/stay', { roomId, checkIn: ci, checkOut: co, guests: 2, acceptPolicy: true, card: CARD, expect: { tier: q.tier, dueNow: q.dueNow }, ...extra }); };
+const book = async (t, roomId, ci, co, extra = {}) => { const q = await t.h('GET', `/bookings/quote?roomId=${roomId}&checkIn=${ci}&checkOut=${co}`); return t.h('POST', '/bookings/stay', { roomId, checkIn: ci, checkOut: co, guests: 2, acceptPolicy: true, card: CARD, ...ID, expect: { tier: q.tier, dueNow: q.dueNow }, ...extra }); };
 const stayOf = (t, id) => t.db.stays.find(s => s.id === id);
 const mine = async (t, id) => (await t.h('GET', '/bookings/mine')).stays.find(s => s.id === id);
 const titles = async (t) => (await t.h('GET', '/notifications')).items.map(n => n.title);
@@ -137,9 +141,9 @@ test('a request the hotel never answers is declined and refunded once the guest 
 });
 test('ride and rental requests reach the provider, and the answer reaches the guest', async () => {
   const t = mkBackend(); await t.as('tourist'); const route = (await t.h('GET', '/transport/routes'))[0];
-  const ride = await t.h('POST', '/transport/book', { routeId: route.id, pickupAt: new Date(Date.now() + 3 * 864e5).toISOString(), passengers: 2, luggage: 1 });
+  const ride = await rideReq(t.h, { routeId: route.id, pickupAt: new Date(Date.now() + 3 * 864e5).toISOString(), passengers: 2, luggage: 1 });
   const v = (await t.h('GET', '/rentals/vehicles'))[0], d1 = addDays(localDate(), 5);
-  const rent = await t.h('POST', '/rentals/book', { vehicleId: v.id, mode: v.rent_driver != null ? 'driver' : 'self', licenseOk: true, start: d1, end: d1, destinations: [(await t.h('GET', '/destinations'))[0].id], pickup: 'Virac', passengers: 1 });
+  const rent = await rentReq(t.h, { vehicleId: v.id, mode: v.rent_driver != null ? 'driver' : 'self', licenseOk: true, start: d1, end: d1, destinations: [(await t.h('GET', '/destinations'))[0].id], pickup: 'Virac', passengers: 1 });
   const owner = t.db.providers.find(p => p.id === route.provider_id).owner_id, email = t.db.users.find(u => u.id === owner).email.replace('@demo.test', '');
   await t.as(email); const got = await titles(t); assert.ok(got.some(x => /New ride request/.test(x))); assert.ok(got.some(x => /New rental request/.test(x)));
   await t.h('PATCH', `/transport/bookings/${ride.booking.id}`, { status: 'confirmed' }); await t.h('PATCH', `/transport/rentals/${rent.rental.id}`, { status: 'rejected' });

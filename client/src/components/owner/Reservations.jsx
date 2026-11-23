@@ -5,6 +5,7 @@ import { useSyncVersion } from '../../lib/sync.js';
 import { Badge, Empty, btn, btnGhost } from '../ui.jsx';
 import { peso, localText, POLICY } from '../../lib/policy.js';
 import Messages from '../Messages.jsx';
+import { IdPhotoButton } from '../IdUpload.jsx';
 const dayText = (d) => new Date(d + 'T00:00:00').toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
 const timeText = (iso) => new Date(iso).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' });
 const DONE = { confirmed: 'accepted', declined: 'declined', cancelled: 'cancelled', completed: 'marked as completed', no_show: 'marked as a no-show' }, TOLD = ['confirmed', 'declined', 'cancelled'];
@@ -47,6 +48,7 @@ export default function Reservations({ businessId, onChanged }) {
           {r.kind === 'stay' && r.tier && <p className="text-ocean/75">₱{Number(r.total).toLocaleString()} total (taxes and fees included) · {r.payment === 'refunded' ? `${peso(r.charged)} refunded to the guest`
             : r.tier === 'guarantee' ? `card on file ${r.card ? `(${r.card.brand} ••${r.card.last4})` : ''}, nothing charged · free cancellation until ${localText(r.free_cancel_until)}${r.guarantee === 'pending' ? ' · card needs attention, the booking is released at the deadline if it is not fixed' : ''}`
             : r.tier === 'deposit' ? `${peso(r.charged)} deposit paid, non-refundable · the balance is paid at the property` : `${peso(r.charged)} paid in full, non-refundable`}{r.fee_charged > 0 && ` · ${peso(r.fee_charged)} charged to the guest's card`}</p>}
+          {r.kind === 'stay' && <p className="mt-1"><IdPhotoButton photo={r.id_photo} /></p>}
           {r.email && <a href={`mailto:${r.email}`} className="mt-1 inline-flex items-center gap-1 text-teal underline"><Mail size={13} />{r.email}</a>}</div></div>
         <Badge s={r.status}>{LABEL[r.status] || r.status}</Badge></div>
       {(NEXT[r.kind][r.status] || []).length > 0 && <div className="mt-3 flex flex-wrap items-center gap-2 border-t border-line pt-3">{NEXT[r.kind][r.status].filter(([st]) => !(r.kind === 'stay' && st === 'no_show' && !r.can_no_show)).map(([st, text, warn]) => <button key={st} disabled={busy === r.id || (st === 'confirmed' && r.guarantee === 'pending')} onClick={() => move(r, st, text)} className={`${warn ? `${btnGhost} text-red-700` : btn} disabled:opacity-50`}>{text}</button>)}{r.guarantee === 'pending' && r.status === 'pending' && <span className="text-xs text-ocean/65">Waiting for the guest to add a valid card.</span>}{r.kind === 'stay' && r.status === 'confirmed' && r.tier && !r.can_no_show && <span className="text-xs text-ocean/55">A no-show can be marked after {POLICY.noShowAfter} on the check-in day.</span>}</div>}<Messages kind={r.kind} id={r.id} unread={r.unread_messages} to={r.guest} onRead={load} /></li>)}</ul>}

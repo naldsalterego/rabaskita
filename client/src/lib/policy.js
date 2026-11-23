@@ -38,7 +38,7 @@ export const localText = (iso) => {
   return `${day} · ${time}`;
 };
 
-export const tierFor = (hours) => (hours >= POLICY.guaranteeHours ? TIERS.guarantee : hours >= POLICY.depositHours ? TIERS.deposit : TIERS.full);
+export const tierFor = (hours, rules = POLICY) => (hours >= rules.guaranteeHours ? TIERS.guarantee : hours >= rules.depositHours ? TIERS.deposit : TIERS.full);
 
 /**
  * What a new booking of `total` pesos for `checkIn` owes right now.
@@ -46,30 +46,30 @@ export const tierFor = (hours) => (hours >= POLICY.guaranteeHours ? TIERS.guaran
  *   deposit   (48h up to 72h ahead): 50% charged now, non-refundable
  *   full      (under 48h, same day included): 100% charged now, non-refundable
  */
-export function quote(total, checkIn, { time = POLICY.defaultCheckIn, at = new Date() } = {}) {
-  const arrival = arrivalAt(checkIn, time), hours = (arrival - at) / H, tier = tierFor(hours);
-  const dueNow = tier === TIERS.guarantee ? 0 : tier === TIERS.deposit ? money(total * POLICY.depositRate) : money(total);
-  const cancelUntil = tier === TIERS.guarantee ? new Date(arrival - POLICY.guaranteeHours * H).toISOString() : null;
-  const reminderAt = tier === TIERS.guarantee && hours > POLICY.reminderHours ? new Date(arrival - POLICY.reminderHours * H).toISOString() : null;
+export function quote(total, checkIn, { rules = POLICY, time = rules.defaultCheckIn, at = new Date() } = {}) {
+  const arrival = arrivalAt(checkIn, time), hours = (arrival - at) / H, tier = tierFor(hours, rules);
+  const dueNow = tier === TIERS.guarantee ? 0 : tier === TIERS.deposit ? money(total * rules.depositRate) : money(total);
+  const cancelUntil = tier === TIERS.guarantee ? new Date(arrival - rules.guaranteeHours * H).toISOString() : null;
+  const reminderAt = tier === TIERS.guarantee && hours > rules.reminderHours ? new Date(arrival - rules.reminderHours * H).toISOString() : null;
   return { tier, hours, total: money(total), dueNow, balance: money(total - dueNow), refundable: tier === TIERS.guarantee, cancelUntil, reminderAt, arrival: arrival.toISOString() };
 }
 
 /** What happens to the money if the guest cancels `stay` now. `stay` is a stored booking. */
-export function cancelTerms(stay, at = new Date()) {
+export function cancelTerms(stay, at = new Date(), rules = POLICY) {
   const paid = Number(stay.charged || 0);
   if (stay.status === 'pending') return { refund: paid, fee: 0, free: true, note: 'withdrawn' }; // the hotel has not accepted yet, so nothing was booked
   if (stay.policy_tier === TIERS.guarantee) {
     const free = at <= new Date(stay.free_cancel_until);
-    return { refund: 0, fee: free ? 0 : money(stay.total * POLICY.lateFeeRate), free, note: free ? 'free' : 'late' };
+    return { refund: 0, fee: free ? 0 : money(stay.total * rules.lateFeeRate), free, note: free ? 'free' : 'late' };
   }
   return { refund: 0, fee: 0, free: false, note: 'forfeited', forfeited: paid };
 }
 
 /** Amount charged to the card on file when a card-guaranteed booking is a no-show. Deposits and full payments are simply kept. */
-export const noShowFee = (stay) => (stay.policy_tier === TIERS.guarantee ? money(stay.total * POLICY.lateFeeRate) : 0);
+export const noShowFee = (stay, rules = POLICY) => (stay.policy_tier === TIERS.guarantee ? money(stay.total * rules.lateFeeRate) : 0);
 
 /** An owner may mark a no-show only once the guest has had the whole check-in day to arrive. */
-export const canMarkNoShow = (checkIn, at = new Date()) => at >= arrivalAt(checkIn, POLICY.noShowAfter);
+export const canMarkNoShow = (checkIn, at = new Date(), rules = POLICY) => at >= arrivalAt(checkIn, rules.noShowAfter);
 
 /** Short plain-language summary of a quote, used on the booking page and in alerts. */
 export function terms(q) {
@@ -77,3 +77,36 @@ export function terms(q) {
   if (q.tier === TIERS.deposit) return `${peso(q.dueNow)} (50% of the stay) is charged now and is non-refundable. If you do not show up, the deposit is forfeited and nothing more is charged. The balance of ${peso(q.balance)} is paid at the property.`;
   return `${peso(q.dueNow)} (100% of the stay) is charged now and is non-refundable. If you do not show up, the full amount is forfeited.`;
 }
+
+// ---- Roam: vehicle rentals, tricycle commutes, and airport and port rides.
+// Rentals use the same three tiers as stays (card on file, deposit, full payment), counted from the pick-up date at the pick-up time.
+// A ride or commute is a short hop, so it has no deposit: a valid card is kept on file, the fare is paid to the driver at the end of
+// the trip, and cancelling or not showing up after the free-cancellation time charges a share of the fare to that card.
+export const ROAM = Object.freeze({
+  rental: Object.freeze({ guaranteeHours: 72, depositHours: 48, reminderHours: 96, depositRate: 0.5, lateFeeRate: 0.5, defaultCheckIn: '08:00', noShowAfter: '10:00', replyWindowHours: 6 }),
+  ride: Object.freeze({ freeCancelHours: 2, lateFeeRate: 0.5, noShowGraceMinutes: 15, replyWindowHours: 1 }),
+  commute: Object.freeze({ maxKm: 30, detour: 1.35 }), // detour: roads are longer than the straight line between two points
+  idRetentionDays: 30, // a guest's ID photo is deleted this many days after the booking is over
+});
+export const RIDE_TIER = 'ride';
+
+/** What a rental of `total` pesos starting on `start` owes right now. Same tiers as a stay. */
+export const rentalQuote = (total, start, opts = {}) => quote(total, start, { ...opts, rules: ROAM.rental });
+export const rentalCancelTerms = (rental, at = new Date()) => cancelTerms(rental, at, ROAM.rental);
+export const rentalNoShowFee = (rental) => noShowFee(rental, ROAM.rental);
+export const canMarkRentalNoShow = (start, at = new Date()) => canMarkNoShow(start, at, ROAM.rental);
+
+/** What a ride of `fare` pesos picking up at `pickupAt` (an ISO time) means for the guest. The fare itself is paid to the driver. */
+export function rideQuote(fare, pickupAt, { at = new Date() } = {}) {
+  const pickup = new Date(pickupAt), hours = (pickup - at) / H, cancelUntil = new Date(pickup - ROAM.ride.freeCancelHours * H).toISOString();
+  return { tier: RIDE_TIER, hours, fare: money(fare), total: money(fare), dueNow: 0, lateFee: money(fare * ROAM.ride.lateFeeRate), cancelUntil, pickup: pickup.toISOString() };
+}
+/** What cancelling a stored ride costs. A request the driver has not accepted yet can always be withdrawn for free. */
+export function rideCancelTerms(ride, at = new Date()) {
+  if (ride.status === 'pending') return { fee: 0, free: true, note: 'withdrawn' };
+  const free = at <= new Date(ride.free_cancel_until);
+  return { fee: free ? 0 : money(ride.fare * ROAM.ride.lateFeeRate), free, note: free ? 'free' : 'late' };
+}
+export const rideNoShowFee = (ride) => money(ride.fare * ROAM.ride.lateFeeRate);
+/** A driver may mark a no-show only after waiting a short grace period past the pick-up time. */
+export const canMarkRideNoShow = (pickupAt, at = new Date()) => at >= new Date(new Date(pickupAt).getTime() + ROAM.ride.noShowGraceMinutes * 6e4);

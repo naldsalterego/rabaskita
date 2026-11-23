@@ -4,13 +4,17 @@ import { createBackend, seed } from '../src/lib/backend.js';
 
 const fails = (p, re) => assert.rejects(p, re);
 const CARD = { token: 'sbx_ok_4242', brand: 'Visa', last4: '4242', expMonth: 12, expYear: 2040 };
+const ID = { idPhoto: 'idb:test-id-photo-0001', idConsent: true };
+// Roam requests the way the site sends them: ask for today's terms, then confirm exactly those terms with a card and a photo of an ID.
+const rideReq = async (h, body, path = '/transport/book') => { const q = await h('GET', `/transport/ride-quote?${body.routeId ? 'routeId=' + body.routeId : `vehicleId=${body.vehicleId}&from=${encodeURIComponent(body.from)}&to=${encodeURIComponent(body.to)}`}&pickupAt=${encodeURIComponent(body.pickupAt)}`); return h('POST', path, { ...body, acceptPolicy: true, card: CARD, ...ID, expect: { fare: q.fare } }); };
+const rentReq = async (h, body) => { const q = await h('GET', `/rentals/quote?vehicleId=${body.vehicleId}&mode=${body.mode}&start=${body.start}&end=${body.end}`); return h('POST', '/rentals/book', { ...body, acceptPolicy: true, card: CARD, ...ID, expect: { tier: q.tier, dueNow: q.dueNow } }); };
 const addDays = (n) => new Date(Date.now() + n * 864e5).toISOString().slice(0, 10);
 const mkBackend = () => {
   let db = seed(), tok = ''; const be = createBackend({ token: () => tok, load: async () => structuredClone(db), save: async d => { db = structuredClone(d); } });
   return { h: be.handle, get db() { return db; }, as: async (who) => { tok = (await be.handle('POST', '/auth/login', { email: who + '@demo.test', password: 'demo1234' })).token; } };
 };
 const stay = async (t) => { const room = t.db.rooms.find(r => r.name === 'Standard room'), q = await t.h('GET', `/bookings/quote?roomId=${room.id}&checkIn=${addDays(10)}&checkOut=${addDays(11)}`);
-  return t.h('POST', '/bookings/stay', { roomId: room.id, checkIn: addDays(10), checkOut: addDays(11), guests: 2, acceptPolicy: true, card: CARD, expect: { tier: q.tier, dueNow: q.dueNow } }); };
+  return t.h('POST', '/bookings/stay', { roomId: room.id, checkIn: addDays(10), checkOut: addDays(11), guests: 2, acceptPolicy: true, card: CARD, ...ID, expect: { tier: q.tier, dueNow: q.dueNow } }); };
 
 test('a guest can start the conversation, the owner is alerted and can answer, and unread counts follow', async () => {
   const t = mkBackend(); await t.as('tourist'); const bk = await stay(t), id = bk.booking.id;
@@ -43,8 +47,8 @@ test('five messages in a row without a reply is the limit, and a reply resets it
 });
 test('messages work for table reservations, rides and rentals', async () => {
   const t = mkBackend(); await t.as('tourist');
-  const route = (await t.h('GET', '/transport/routes'))[0], ride = await t.h('POST', '/transport/book', { routeId: route.id, pickupAt: new Date(Date.now() + 3 * 864e5).toISOString(), passengers: 2, luggage: 1 });
-  const v = (await t.h('GET', '/rentals/vehicles'))[0], rent = await t.h('POST', '/rentals/book', { vehicleId: v.id, mode: v.rent_driver != null ? 'driver' : 'self', licenseOk: true, start: addDays(5), end: addDays(5), destinations: [(await t.h('GET', '/destinations'))[0].id], pickup: 'Virac', passengers: 1 });
+  const route = (await t.h('GET', '/transport/routes'))[0], ride = await rideReq(t.h, { routeId: route.id, pickupAt: new Date(Date.now() + 3 * 864e5).toISOString(), passengers: 2, luggage: 1 });
+  const v = (await t.h('GET', '/rentals/vehicles'))[0], rent = await rentReq(t.h, { vehicleId: v.id, mode: v.rent_driver != null ? 'driver' : 'self', licenseOk: true, start: addDays(5), end: addDays(5), destinations: [(await t.h('GET', '/destinations'))[0].id], pickup: 'Virac', passengers: 1 });
   await t.h('POST', `/messages/ride/${ride.booking.id}`, { body: 'Can you pick me up at the airport?' }); await t.h('POST', `/messages/rental/${rent.rental.id}`, { body: 'Is fuel included?' });
   const pv = t.db.providers.find(p => p.id === route.provider_id), email = t.db.users.find(u => u.id === pv.owner_id).email.replace('@demo.test', ''); await t.as(email);
   const rides = await t.h('GET', '/transport/provider/bookings'), rentals = await t.h('GET', '/transport/provider/rentals'); assert.equal(rides[0].unread_messages, 1); assert.equal(rentals[0].unread_messages, 1);

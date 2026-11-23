@@ -2,10 +2,9 @@ import { useEffect, useRef, useState } from 'react';
 import { ShieldCheck, CreditCard, X, Lock } from 'lucide-react';
 import { api } from '../lib/api.js';
 import { tokenize, groupCard, SANDBOX_CARDS } from '../lib/card.js';
-import { peso, localText, POLICY } from '../lib/policy.js';
+import { peso, localText, POLICY, ROAM } from '../lib/policy.js';
 import { inp, btn, btnGhost } from './ui.jsx';
-
-const late = (total) => peso(Math.round(total * POLICY.lateFeeRate * 100) / 100);
+import { IdUpload } from './IdUpload.jsx';
 
 /** The policy in plain words, shown on every stay page before anyone books. */
 export function PolicySummary() {
@@ -20,27 +19,29 @@ export function PolicySummary() {
   </div>);
 }
 
-/** What this booking costs and what happens if plans change, from the server's current quote. */
-export function TermsBox({ q }) {
-  const tone = q.tier === 'guarantee' ? 'border-teal/40 bg-teal/10' : 'border-tang/50 bg-sand/40';
-  const head = q.tier === 'guarantee' ? 'No payment today' : `${peso(q.dueNow)} charged today${q.tier === 'deposit' ? ' (50% deposit)' : ' (100% of the stay)'}`;
+const WORDS = { stay: { who: 'hotel', what: 'stay', paid: 'paid at the property', balance: 'is paid at the property' }, rental: { who: 'provider', what: 'rental', paid: 'paid to the provider', balance: 'is paid to the provider at pick-up' } };
+/** What this booking costs and what happens if plans change, from the server's current quote. Used for stays and for vehicle rentals. */
+export function TermsBox({ q, kind = 'stay' }) {
+  const w = WORDS[kind], tone = q.tier === 'guarantee' ? 'border-teal/40 bg-teal/10' : 'border-tang/50 bg-sand/40';
+  const head = q.tier === 'guarantee' ? 'No payment today' : `${peso(q.dueNow)} charged today${q.tier === 'deposit' ? ' (50% deposit)' : ` (100% of the ${w.what})`}`;
+  const late = (total) => peso(Math.round(total * (kind === 'rental' ? ROAM.rental : POLICY).lateFeeRate * 100) / 100);
   return (<div className={`rounded-2xl border p-4 text-sm ${tone}`} aria-live="polite">
     <p className="font-display text-lg">{head}</p>
     <ul className="mt-1 grid gap-1">
       {q.tier === 'guarantee' && <>
         <li>A valid credit card must be on file to guarantee the booking.</li>
-        <li><b>Free cancellation until {localText(q.cancelUntil)}</b> (hotel local time).</li>
+        <li><b>Free cancellation until {localText(q.cancelUntil)}</b> ({kind === 'rental' ? 'Philippine time' : 'hotel local time'}).</li>
         <li>After that, cancelling or not showing up charges {late(q.total)} to your card. If the booking is not guaranteed by the deadline, it is released automatically.</li>
-        {q.reminderAt && <li>We will remind you 96 hours before check-in.</li>}
-        <li>Total {peso(q.total)}, paid at the property.</li></>}
+        {q.reminderAt && <li>We will remind you 96 hours before {kind === 'rental' ? 'pick-up' : 'check-in'}.</li>}
+        <li>Total {peso(q.total)}, {w.paid}.</li></>}
       {q.tier === 'deposit' && <>
         <li>Non-refundable once booked.</li>
         <li>No-show: the deposit is forfeited. No additional charge.</li>
-        <li>The balance of {peso(q.balance)} is paid at the property.</li></>}
+        <li>The balance of {peso(q.balance)} {w.balance}.</li></>}
       {q.tier === 'full' && <>
         <li>Non-refundable once booked.</li>
         <li>No-show: the full amount is forfeited.</li></>}
-      <li className="text-xs text-ocean/65">All amounts include taxes and mandatory fees. If the hotel declines your request, you are refunded in full.</li>
+      <li className="text-xs text-ocean/65">All amounts include taxes and mandatory fees. If the {w.who} declines your request, you are refunded in full.</li>
     </ul>
   </div>);
 }
@@ -62,16 +63,17 @@ export const emptyCard = { number: '', exp: '', cvc: '' };
 
 /** Confirm a stay request: shows today's terms for these dates, takes the card, and sends the request to the hotel. */
 export function RequestDialog({ room, hotel, checkIn, checkOut, guests, onClose, onDone }) {
-  const [q, setQ] = useState(null), [card, setCard] = useState(emptyCard), [agree, setAgree] = useState(false), [busy, setBusy] = useState(false), [err, setErr] = useState(''), first = useRef(null), [requestId] = useState(() => (globalThis.crypto?.randomUUID?.() || String(Date.now()) + Math.random())); // one id per dialog, so a repeated send can never book twice
+  const [q, setQ] = useState(null), [card, setCard] = useState(emptyCard), [agree, setAgree] = useState(false), [idPhoto, setIdPhoto] = useState(''), [idOk, setIdOk] = useState(false), [busy, setBusy] = useState(false), [err, setErr] = useState(''), first = useRef(null), [requestId] = useState(() => (globalThis.crypto?.randomUUID?.() || String(Date.now()) + Math.random())); // one id per dialog, so a repeated send can never book twice
   const loadQuote = () => api(`/bookings/quote?roomId=${room.id}&checkIn=${checkIn}&checkOut=${checkOut}`).then(setQ).catch(e => setErr(e.message));
   useEffect(() => { loadQuote(); first.current?.focus(); const esc = (e) => e.key === 'Escape' && onClose(); document.addEventListener('keydown', esc); return () => document.removeEventListener('keydown', esc); }, []); // eslint-disable-line
   async function submit(e) {
     e.preventDefault(); setErr('');
     if (!q) return;
     const t = tokenize(card); if (t.error) return setErr(t.error);
+    if (!idPhoto) return setErr('Please attach a photo of a valid ID.'); if (!idOk) return setErr('Please agree to share your ID photo for this booking.');
     if (!agree) return setErr('Please accept the booking policy to continue.');
     setBusy(true);
-    try { onDone(await api('/bookings/stay', { method: 'POST', body: { roomId: room.id, checkIn, checkOut, guests: Number(guests), acceptPolicy: true, requestId, card: t.card, expect: { tier: q.tier, dueNow: q.dueNow } } })); }
+    try { onDone(await api('/bookings/stay', { method: 'POST', body: { roomId: room.id, checkIn, checkOut, guests: Number(guests), acceptPolicy: true, requestId, idPhoto, idConsent: true, card: t.card, expect: { tier: q.tier, dueNow: q.dueNow } } })); }
     catch (x) { setErr(x.message.includes('Sign in') ? 'Please sign in to book.' : x.message); if (/terms changed/.test(x.message)) { setAgree(false); loadQuote(); } setBusy(false); }
   }
   const label = !q ? 'Loading terms…' : busy ? 'Sending…' : q.dueNow > 0 ? `Pay ${peso(q.dueNow)} and send request` : 'Send request (no charge today)';
@@ -82,6 +84,7 @@ export function RequestDialog({ room, hotel, checkIn, checkOut, guests, onClose,
       <p className="mt-2 text-sm">{checkIn} to {checkOut} · {q ? `${q.nights} night${q.nights === 1 ? '' : 's'}` : ''} · {guests} guest{Number(guests) === 1 ? '' : 's'}{q && <> · <b>Total {peso(q.total)}</b> <span className="text-ocean/60">(taxes and fees included)</span></>}</p>
       <div className="mt-3">{q ? <TermsBox q={q} /> : <p className="text-sm text-ocean/60">{err || 'Loading the terms for your dates…'}</p>}</div>
       <div className="mt-4" ref={first} tabIndex={-1}><CardFields value={card} onChange={setCard} /></div>
+      <div className="mt-4"><IdUpload value={idPhoto} onChange={setIdPhoto} consent={idOk} onConsent={setIdOk} who="the hotel" /></div>
       <label className="mt-4 flex items-start gap-2 text-sm"><input type="checkbox" className="mt-1" checked={agree} onChange={e => setAgree(e.target.checked)} /><span>I have read the terms above and accept the booking policy. I understand my request goes to the hotel for approval.</span></label>
       {err && q && <p role="alert" className="mt-3 rounded-xl bg-red-50 p-3 text-sm text-red-800">{err}</p>}
       <div className="mt-4 flex flex-wrap justify-end gap-2"><button type="button" onClick={onClose} className={btnGhost}>Not now</button><button disabled={!q || busy} className={`${btn} disabled:opacity-50`}>{label}</button></div>

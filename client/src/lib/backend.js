@@ -2,7 +2,8 @@
 // It runs in the browser (data in localStorage) or in a Netlify function (data in Netlify Blobs), through the `io` adapter.
 // All listings below are SAMPLE data for a prototype. Nothing here is real or verified.
 import { nearestOrder, withLegs } from './itinerary.js';
-import { POLICY, TIERS, quote, cancelTerms, noShowFee, canMarkNoShow, arrivalAt, localDate, localText, peso, isDate } from './policy.js';
+import { POLICY, TIERS, ROAM, RIDE_TIER, quote, cancelTerms, noShowFee, canMarkNoShow, arrivalAt, localDate, localText, peso, isDate, rentalQuote, rentalCancelTerms, rentalNoShowFee, canMarkRentalNoShow, rideQuote, rideCancelTerms, rideNoShowFee, canMarkRideNoShow } from './policy.js';
+import { HUBS, onIsland, roadKm, commuteRates, commuteFare, idRefOk } from './roam.js';
 import { checkCard } from './card.js';
 function seedBranding() { return { siteName: 'TRISIKSTI', tagline: 'The Happy Island · Tourism platform', logo: '', partnerLogo: '', showPartner: true, partnerBackdrop: 'navy' }; }
 function seedCredits() { return { company: 'IslaTek', members: ['Engr. Morris Aquino', 'Engr. John Ronald Rodriguez', 'Engr. John Patrick Valledor', 'Engr. Benz Art Wayne Lagsilon'].map(name => ({ id: uid(), name, role: '', photo: '' })) }; }
@@ -35,9 +36,9 @@ export function seed(adminPassword = 'demo1234') {
    [biz('Pili Treats Kitchen', 'Bato', 'Sample home kitchen. Pili sweets are made in small batches for each order.', 13.6, 124.37, 'Native delicacies', admin), ['Pili sweets'], 'Order 2 days ahead', 'Order by phone. Pick-up or delivery within Bato.', [['Pili brittle (pack)', 150], ['Pili tart (box of 6)', 260]]]].forEach(([b, cuisines, lead, note, menu]) => { const r = { id: uid(), business_id: b.id, type: 'native', cuisines, price_range: null, accepts_reservations: false, lead_time: lead, order_note: note }; d.restaurants.push(r); menu.forEach(([item_name, price]) => d.menus.push({ id: uid(), restaurant_id: r.id, item_name, description: '', price })); });
   biz('Island Souvenirs', 'Virac', 'Sample souvenir shop with local crafts and gifts.', 13.5815, 124.232, 'Souvenir shops', ownerD); [['Coconut-shell keychain', 80, 'Handmade, sample item'], ['Woven abaca bag', 450, 'Local weave, sample item'], ['Dried fish pack', 220, 'Sample item']].forEach(([name, price, description]) => d.products.push({ id: uid(), business_id: d.businesses.find(x => x.name.startsWith('Island Souvenirs')).id, name: name + ' (sample)', price, description, photo: null })); biz('Barangay Grocery', 'Bato', 'Sample grocery for travel supplies and snacks.', 13.601, 124.301, 'Groceries', ownerD);
   const p = { id: uid(), owner_id: prov.id, name: 'Sample Airport Vans', phone: '000-000-0000 (sample)', status: 'approved', created_at: now(), documents: [] }, p2 = { id: uid(), owner_id: prov2.id, name: 'Sample Island Rentals', phone: '000-000-0001 (sample)', status: 'approved', created_at: now(), documents: [] }; d.providers.push(p, p2); p.documents = sampleDocs(['bir', 'registration', 'permit', 'franchise']);
-  const veh = (pr, name, type, capacity, driver, self, withDriver, description) => d.vehicles.push({ id: uid(), provider_id: pr.id, name: name + ' (sample)', type, capacity, plate_no: 'SAMPLE', driver_name: driver, description: description + ' Sample listing and sample price.', rent_self: self, rent_driver: withDriver, is_available: true });
+  const veh = (pr, name, type, capacity, driver, self, withDriver, description, commute) => d.vehicles.push({ id: uid(), provider_id: pr.id, name: name + ' (sample)', type, capacity, plate_no: 'SAMPLE', driver_name: driver, description: description + ' Sample listing and sample price.', rent_self: self, rent_driver: withDriver, commute_base: commute?.[0] ?? null, commute_base_km: commute?.[1] ?? null, commute_per_km: commute?.[2] ?? null, is_available: true }); // commute = [base fare, km the base covers, pesos per extra km]. SAMPLE rates only: real fares follow the LGU fare matrix
   veh(p, 'Passenger van', 'van', 8, 'Demo Driver', null, 3500, 'Roomy van for groups and long island trips.'); veh(p, 'Compact car', 'car', 4, 'Demo Driver', 2200, 3000, 'Comfortable car for small groups.');
-  veh(p2, 'Scooter', 'motorcycle', 2, 'Sample Guide', 600, 900, 'Easy way to reach beaches and viewpoints.'); veh(p2, 'Tricycle', 'tricycle', 3, 'Sample Driver', null, 1200, 'Local tricycle with a driver for short hops.');
+  veh(p2, 'Scooter', 'motorcycle', 2, 'Sample Guide', 600, 900, 'Easy way to reach beaches and viewpoints.'); veh(p2, 'Tricycle', 'tricycle', 3, 'Sample Driver', null, 1200, 'Local tricycle with a driver for short hops.', [30, 2, 12]);
   veh(p2, 'Multicab', 'multicab', 6, 'Sample Driver', null, 2600, 'Small group transport with a driver.'); veh(p2, 'Pickup SUV', 'car', 5, 'Sample Driver', 3200, 4200, 'Higher clearance for rougher roads.');
   [['Virac Airport', 'Seaside Inn (sample)', 300, 15], ['Virac Airport', 'Maribina Falls', 1200, 60], ['San Andres Port', 'Virac town', 900, 60], ['Virac Port', 'Seaside Inn (sample)', 250, 10]].forEach(([origin, destination, fare, est_minutes]) => d.routes.push({ id: uid(), provider_id: p.id, origin, destination, fare, est_minutes }));
   [['Sample Magnet', 15, 20], ['Sample Tourism Cap', 30, 10], ['Sample Coffee Voucher', 40, null]].forEach(([name, points_cost, stock]) => d.rewards.push({ id: uid(), name, description: 'Sample reward for the demo.', points_cost, stock, is_active: true }));
@@ -107,7 +108,7 @@ export function createBackend(io) {
   const currentUser = () => { const t = io.token() || ''; return t.startsWith('demo:') ? db.users.find(u => u.id === t.slice(5) && u.is_active) : null; };
   const pending = [];
   async function handle(method, fullPath, body) {
-    db = await loadDb(); if (sweepStays()) await io.save(db); const u = new URL(fullPath, 'http://x');
+    db = await loadDb(); { const a = sweepStays(), c = sweepRoam(); if (a || c) await io.save(db); } const u = new URL(fullPath, 'http://x');
     for (const [m, re, fn, roles] of routes) {
       if (m !== method) continue; const mt = re.exec(u.pathname); if (!mt) continue;
       const user = currentUser();
@@ -188,21 +189,87 @@ export function createBackend(io) {
   const ciTime = (room) => db.accommodations.find(a => a.id === room?.accommodation_id)?.check_in_time || POLICY.defaultCheckIn;
   const refundStay = (s, why) => { const pay = db.payments.find(x => x.id === s.payment_id); if (!s.policy_tier || !pay || pay.status !== 'paid') return 0; pay.status = 'refunded'; pay.refunded_at = now(); pay.refund_reason = why; return pay.amount; };
   const chargeCard = (s, amount, why) => { if (!(amount > 0)) return 0; const pay = { id: uid(), user_id: s.user_id, amount, provider_ref: 'SBX-' + rnd(12), status: 'paid', reason: why }; db.payments.push(pay); s.fee_payment_id = pay.id; s.fee_charged = amount; return amount; };
-  R('POST', '/bookings/stay', ({ b, user }) => {
+  // ---- valid ID photo: required on every stay, rental and ride request. It is private (never in a public album). Only the guest, the business or
+  // transport provider the request went to, and the tourism office can open it, every opening by someone else is logged, and it is deleted
+  // ROAM.idRetentionDays after the booking is over.
+  const needId = async (b, user) => {
+    need(idRefOk(b.idPhoto), 'Please attach a clear photo of a valid government-issued ID to continue.');
+    need(b.idConsent === true, 'Please confirm that you agree to share your ID photo for this booking.');
+    need(!io.ownsIdPhoto || await io.ownsIdPhoto(b.idPhoto, user.id), 'Please upload your ID photo again.'); // you cannot attach somebody else's upload
+  };
+  const rideProv = (r) => db.providers.find(x => x.id === (r.provider_id || db.routes.find(y => y.id === r.route_id)?.provider_id));
+  const rentalProv = (r) => db.providers.find(x => x.id === db.vehicles.find(v => v.id === r.vehicle_id)?.provider_id);
+  const idHolder = (x) => (x.room_id ? stayCtx(x).bz?.owner_id : x.start_date ? rentalProv(x)?.owner_id : rideProv(x)?.owner_id);
+  R('POST', '/idphotos/:id/view', ({ p, user }) => { // called before the ID image is served: says whether this person may open it, and logs it
+    const ref = '/api/idphotos/' + p[0], rec = [...db.stays, ...db.rentals, ...db.rides].find(x => x.id_photo === ref); need(rec, 'Not found');
+    need(user.role === 'admin' || rec.user_id === user.id || idHolder(rec) === user.id, 'Forbidden'); if (rec.user_id !== user.id) log(user, 'id.view', rec.id); return { ok: true };
+  }, []);
+  // ---- Roam: places, distances and per-km tricycle commutes (rules in policy.js, distances and fares in roam.js)
+  const placeList = () => [
+    ...HUBS.map(h => ({ id: h.id, label: h.label, group: 'Airport and ports', lat: h.lat, lng: h.lng })),
+    ...db.businesses.filter(b => b.status === 'approved' && b.lat != null && b.lng != null && onIsland({ lat: Number(b.lat), lng: Number(b.lng) })).map(b => ({ id: 'b:' + b.id, label: b.name, group: kindOfBiz(b) === 'stays' ? 'Hotels and stays' : 'Restaurants and shops', municipality: mn(b.municipality_id), lat: Number(b.lat), lng: Number(b.lng) })),
+    ...db.destinations.filter(d => d.is_published && d.lat != null && d.lng != null && onIsland({ lat: Number(d.lat), lng: Number(d.lng) })).map(d => ({ id: 'd:' + d.id, label: d.name, group: 'Places to visit', municipality: mn(d.municipality_id), lat: Number(d.lat), lng: Number(d.lng) })),
+  ].sort((a, b) => a.group.localeCompare(b.group) || a.label.localeCompare(b.label));
+  const parsePlace = (v) => { // 'hub-airport' | 'b:<id>' | 'd:<id>' | 'geo:<lat>,<lng>' (the guest's own location)
+    const s = String(v || ''); if (s.startsWith('geo:')) { const [lat, lng] = s.slice(4).split(',').map(Number), pt = { lat, lng, label: 'My location' }; need(onIsland(pt), 'That location is not on Catanduanes.'); return pt; }
+    return placeList().find(x => x.id === s);
+  };
+  const commuteOf = (b, type) => { // per-km commute fare on a vehicle: leave all three blank to not offer commutes
+    const [base, baseKm, perKm] = [b.commuteBase, b.commuteBaseKm, b.commutePerKm].map(nn);
+    if (base == null && baseKm == null && perKm == null) return { commute_base: null, commute_base_km: null, commute_per_km: null };
+    need(type === 'tricycle', 'Per-km commute fares are for tricycles only.'); need(base != null && baseKm != null && perKm != null, 'Fill in all three commute fare boxes, or leave all three empty.');
+    need(base > 0 && base <= 500 && baseKm >= 0 && baseKm <= 10 && perKm > 0 && perKm <= 100, 'Check the commute fare: base fare ₱1 to ₱500, base distance 0 to 10 km, ₱1 to ₱100 for each extra km.');
+    return { commute_base: base, commute_base_km: baseKm, commute_per_km: perKm };
+  };
+  const commutePlan = (vehicleId, fromS, toS) => {
+    const v = db.vehicles.find(x => x.id === vehicleId); need(v && vehOk(v), 'That tricycle is not available'); const rates = commuteRates(v); need(rates, 'This vehicle does not offer commute rides');
+    const from = parsePlace(fromS), to = parsePlace(toS); need(from && to, 'Choose where you are and where you are going'); need(from.lat !== to.lat || from.lng !== to.lng, 'Choose two different places');
+    const km = roadKm(from, to); need(km <= ROAM.commute.maxKm, `That trip is about ${km} km. Commutes cover up to ${ROAM.commute.maxKm} km. For a longer trip, rent the vehicle instead.`);
+    return { v, pv: db.providers.find(x => x.id === v.provider_id), from, to, km, fare: commuteFare(rates, km), rates };
+  };
+  R('GET', '/transport/places', () => placeList());
+  R('GET', '/transport/commute/options', ({ q }) => { // every tricycle that does commutes, with what this trip would cost with each
+    const from = parsePlace(q.from), to = parsePlace(q.to); need(from && to, 'Choose where you are and where you are going'); need(from.lat !== to.lat || from.lng !== to.lng, 'Choose two different places');
+    const km = roadKm(from, to), tooFar = km > ROAM.commute.maxKm;
+    const options = tooFar ? [] : db.vehicles.filter(v => vehOk(v) && commuteRates(v)).map(v => { const rates = commuteRates(v), pv = db.providers.find(x => x.id === v.provider_id); return { vehicle_id: v.id, name: v.name || v.type, capacity: v.capacity, driver_name: v.driver_name || '', provider: pv?.name, cover_photo: v.cover_photo || pv?.cover_photo || null, papers_status: overall(pv?.documents, 'transport'), rates, fare: commuteFare(rates, km) }; }).sort((a, b) => a.fare - b.fare);
+    return { from: { label: from.label }, to: { label: to.label }, km, max_km: ROAM.commute.maxKm, too_far: tooFar, options };
+  });
+  R('GET', '/transport/ride-quote', ({ q }) => { // the terms of one ride right now: its fare and the free-cancellation time
+    need(q.pickupAt && new Date(q.pickupAt) > new Date(), 'Choose a pick-up time in the future');
+    if (q.routeId) { const rt = db.routes.find(r => r.id === q.routeId); need(rt && db.providers.find(x => x.id === rt.provider_id)?.status === 'approved', 'Route not available'); return { ...rideQuote(rt.fare, q.pickupAt), from_label: rt.origin, to_label: rt.destination, km: null }; }
+    const c = commutePlan(q.vehicleId, q.from, q.to); return { ...rideQuote(c.fare, q.pickupAt), from_label: c.from.label, to_label: c.to.label, km: c.km };
+  });
+  const rideAlert = (r, what) => { const pv = rideProv(r); if (!pv) return; const g = db.users.find(u => u.id === r.user_id);
+    notify(pv.owner_id, { type: 'booking', title: { request: `New ride request for ${pv.name}`, cancelled: `Ride cancelled for ${pv.name}` }[what], body: `${g?.full_name || 'A guest'} · ${r.pickup} to ${r.dropoff} · ${when(r.pickup_at)} · ${r.passengers} passenger(s) · ₱${Number(r.fare).toLocaleString('en-PH')}`, link: '/dashboard' }, true); };
+  const rentalAlert = (r, what) => { const pv = rentalProv(r), v = db.vehicles.find(x => x.id === r.vehicle_id); if (!pv) return; const g = db.users.find(u => u.id === r.user_id);
+    notify(pv.owner_id, { type: 'booking', title: { request: `New rental request for ${pv.name}`, cancelled: `Rental cancelled for ${pv.name}` }[what], body: `${g?.full_name || 'A guest'} · ${v?.name || v?.type || 'Vehicle'} · ${r.start_date} to ${r.end_date} · ₱${Number(r.total).toLocaleString('en-PH')}`, link: '/dashboard' }, true); };
+  // A ride or commute request. The fare is paid to the driver, a valid card stays on file, and a late cancellation or no-show charges part of the fare to it.
+  const bookRide = async (user, b, { pv, v, route, from, to, km, fare, kind }) => {
+    const again = b.requestId && db.rides.find(x => x.user_id === user.id && x.request_id === String(b.requestId));
+    if (again) return { booking: { id: again.id, status: again.status, fare: again.fare, free_cancel_until: again.free_cancel_until }, replayed: true };
+    need(b.acceptPolicy === true, 'Please read and accept the booking policy first');
+    const q = rideQuote(fare, b.pickupAt); need(b.expect && Number(b.expect.fare) === q.fare, 'The fare changed while you were booking. Please review it and confirm again.');
+    await needId(b, user); const card = checkCard(b.card, b.pickupAt);
+    const x = { id: uid(), user_id: user.id, kind, route_id: route?.id ?? null, provider_id: pv.id, vehicle_id: v?.id ?? null, pickup: from.label, dropoff: to.label, from: kind === 'commute' ? { lat: from.lat, lng: from.lng } : null, to: kind === 'commute' ? { lat: to.lat, lng: to.lng } : null, km: km ?? null,
+      pickup_at: b.pickupAt, passengers: Number(b.passengers), luggage: b.luggage, fare: q.fare, status: 'pending', created_at: now(), request_id: b.requestId ? String(b.requestId).slice(0, 64) : undefined,
+      policy_tier: RIDE_TIER, card, free_cancel_until: q.cancelUntil, policy_accepted_at: now(), id_photo: b.idPhoto, id_consent_at: now() };
+    db.rides.push(x); rideAlert(x, 'request'); return { booking: { id: x.id, status: x.status, fare: x.fare, free_cancel_until: x.free_cancel_until } };
+  };
+  R('POST', '/bookings/stay', async ({ b, user }) => {
     // The page sends one requestId per booking dialog. If the same request arrives again (a double tap, or a retry after a dropped connection),
     // the booking that already exists is returned instead of making and charging a second one.
     const again = b.requestId && db.stays.find(x => x.user_id === user.id && x.request_id === String(b.requestId));
     if (again) return { booking: { id: again.id, status: again.status, total: again.total, tier: again.policy_tier, charged: again.charged, free_cancel_until: again.free_cancel_until }, payment: db.payments.find(x => x.id === again.payment_id) ?? null, replayed: true };
     const room = db.rooms.find(r => r.id === b.roomId); need(room && isDate(b.checkIn) && isDate(b.checkOut) && b.checkOut > b.checkIn && room.capacity >= b.guests, 'Room not available for that group size');
     need(days(b.checkIn, b.checkOut) <= MAX_NIGHTS, `Online bookings are for up to ${MAX_NIGHTS} nights. Please message the hotel about longer stays.`); need(b.checkIn >= localDate(), 'The check-in date has already passed'); need(free(room, b.checkIn, b.checkOut) > 0, 'Sorry, that room was just taken for those dates');
-    need(b.acceptPolicy === true, 'Please read and accept the booking policy first');
+    need(b.acceptPolicy === true, 'Please read and accept the booking policy first'); await needId(b, user);
     const total = room.price_per_night * days(b.checkIn, b.checkOut), q = quote(total, b.checkIn, { time: ciTime(room) });
     need(b.expect && b.expect.tier === q.tier && Number(b.expect.dueNow) === q.dueNow, 'The booking terms changed while you were booking. Please review them and confirm again.');
     const card = checkCard(b.card, b.checkIn); // throws when the card is missing, declined, or expires before check-in
     let pay = null;
     if (q.dueNow > 0) { pay = { id: uid(), user_id: user.id, amount: q.dueNow, provider_ref: 'SBX-' + rnd(12), status: 'paid', reason: q.tier === TIERS.deposit ? 'stay deposit (50%)' : 'stay paid in full' }; db.payments.push(pay); }
     const s = { id: uid(), user_id: user.id, room_id: room.id, check_in: b.checkIn, check_out: b.checkOut, guests: b.guests, total, status: 'pending', payment_id: pay?.id ?? null, created_at: now(),
-      request_id: b.requestId ? String(b.requestId).slice(0, 64) : undefined, policy_tier: q.tier, charged: q.dueNow, card, guarantee: q.tier === TIERS.guarantee ? 'guaranteed' : 'not_needed', free_cancel_until: q.cancelUntil, reminder_at: q.reminderAt, reminder_sent: false, policy_accepted_at: now() };
+      request_id: b.requestId ? String(b.requestId).slice(0, 64) : undefined, policy_tier: q.tier, charged: q.dueNow, card, guarantee: q.tier === TIERS.guarantee ? 'guaranteed' : 'not_needed', free_cancel_until: q.cancelUntil, reminder_at: q.reminderAt, reminder_sent: false, policy_accepted_at: now(), id_photo: b.idPhoto, id_consent_at: now() };
     db.stays.push(s); stayAlert(s, 'request');
     return { booking: { id: s.id, status: s.status, total, tier: q.tier, charged: q.dueNow, free_cancel_until: q.cancelUntil }, payment: pay };
   }, []);
@@ -247,6 +314,44 @@ export function createBackend(io) {
     }
     return changed;
   };
+  // The same upkeep for Roam: rental reminders and releases like stays, a ride request nobody answered, and deleting old ID photos.
+  const sweepRoam = () => {
+    const at = new Date(); let changed = false;
+    for (const r of db.rentals) {
+      if (!r.policy_tier || !['pending', 'confirmed'].includes(r.status)) continue;
+      const pv = rentalProv(r), v = db.vehicles.find(x => x.id === r.vehicle_id), name = pv?.name || 'the provider';
+      if (r.policy_tier === TIERS.guarantee && !r.reminder_sent && r.reminder_at && at >= new Date(r.reminder_at)) {
+        r.reminder_sent = true; changed = true;
+        if (String(r.card?.token).startsWith('sbx_lapse_')) { r.guarantee = 'pending'; notify(r.user_id, { type: 'booking', title: `Your card could not be verified for ${name}`, body: `Add a valid card before ${localText(r.free_cancel_until)} (Philippine time) or the rental will be released automatically.`, link: '/bookings' }, true); }
+        else notify(r.user_id, { type: 'booking', title: `Reminder: free cancellation with ${name} ends in 24 hours`, body: `You can cancel for free until ${localText(r.free_cancel_until)} (Philippine time). After that, cancelling or not showing up charges ${peso(Math.round(r.total * ROAM.rental.lateFeeRate * 100) / 100)} to your card.`, link: '/bookings' }, true);
+      }
+      if (r.policy_tier === TIERS.guarantee && r.guarantee === 'pending' && at > new Date(r.free_cancel_until)) {
+        r.status = 'cancelled'; r.guarantee = 'released'; r.cancelled_by = 'system'; r.cancelled_at = now(); changed = true;
+        notify(r.user_id, { type: 'booking', title: `Your rental with ${name} was released`, body: 'No valid card was on file by the deadline, so the vehicle was released. Nothing was charged.', link: '/bookings' }, true);
+        if (pv) notify(pv.owner_id, { type: 'booking', title: `Rental released for ${name}`, body: `${v?.name || 'Vehicle'} · ${r.start_date} to ${r.end_date} · the guest did not keep a valid card on file`, link: '/dashboard' }, true);
+        continue;
+      }
+      if (r.status === 'pending' && at > Math.max(arrivalAt(r.start_date, ROAM.rental.defaultCheckIn).getTime(), new Date(r.created_at).getTime() + ROAM.rental.replyWindowHours * 36e5)) {
+        r.status = 'declined'; r.cancelled_by = 'system'; r.cancelled_at = now(); changed = true; const back = refundStay(r, 'the provider did not reply before pick-up');
+        notify(r.user_id, { type: 'booking', title: `Your rental request with ${name} expired`, body: back > 0 ? `The provider did not reply in time. ${peso(back)} has been refunded to you in full.` : 'The provider did not reply in time. Nothing was charged.', link: '/bookings' }, true);
+      }
+    }
+    for (const r of db.rides) {
+      if (r.policy_tier !== RIDE_TIER || r.status !== 'pending') continue;
+      if (at > Math.max(new Date(r.pickup_at).getTime(), new Date(r.created_at).getTime() + ROAM.ride.replyWindowHours * 36e5)) {
+        r.status = 'declined'; r.cancelled_by = 'system'; r.cancelled_at = now(); changed = true;
+        notify(r.user_id, { type: 'booking', title: 'Your ride request expired', body: `${r.pickup} to ${r.dropoff} · ${when(r.pickup_at)} · no driver answered in time. Nothing was charged.`, link: '/bookings' }, true);
+      }
+    }
+    // ID photos are kept only while they are needed: ROAM.idRetentionDays after the booking ended (or was cancelled).
+    const recs = [...db.stays, ...db.rentals, ...db.rides], endOf = (x) => new Date(x.check_out ? String(x.check_out).slice(0, 10) + 'T23:59:59+08:00' : x.end_date ? x.end_date + 'T23:59:59+08:00' : x.pickup_at);
+    for (const x of recs) {
+      if (!x.id_photo || at - (x.cancelled_at ? new Date(x.cancelled_at) : endOf(x)) <= ROAM.idRetentionDays * 864e5) continue;
+      const ref = x.id_photo; x.id_photo = null; x.id_purged_at = now(); changed = true;
+      if (!recs.some(y => y.id_photo === ref)) deletePhoto(ref);
+    }
+    return changed;
+  };
   // ---- messages: a guest and the business (or transport provider) talk about one booking. Either side can start the conversation.
   // They go to the business owner's account, so whoever manages that account reads and answers them.
   const NOUN = { stay: 'booking', table: 'table reservation', ride: 'ride request', rental: 'rental request' };
@@ -254,7 +359,7 @@ export function createBackend(io) {
     let rec, bizUser, link, label;
     if (kind === 'stay') { rec = db.stays.find(x => x.id === id); const c = rec && stayCtx(rec); bizUser = c?.bz?.owner_id; link = c?.bz && ownerLink(c.bz); label = c?.bz?.name; }
     else if (kind === 'table') { rec = db.tables.find(x => x.id === id); const c = rec && tableCtx(rec); bizUser = c?.bz?.owner_id; link = c?.bz && ownerLink(c.bz); label = c?.bz?.name; }
-    else if (kind === 'ride') { rec = db.rides.find(x => x.id === id); const pv = rec && db.providers.find(x => x.id === db.routes.find(r => r.id === rec.route_id)?.provider_id); bizUser = pv?.owner_id; link = '/dashboard'; label = pv?.name; }
+    else if (kind === 'ride') { rec = db.rides.find(x => x.id === id); const pv = rec && rideProv(rec); bizUser = pv?.owner_id; link = '/dashboard'; label = pv?.name; }
     else if (kind === 'rental') { rec = db.rentals.find(x => x.id === id); const pv = rec && db.providers.find(x => x.id === db.vehicles.find(v => v.id === rec.vehicle_id)?.provider_id); bizUser = pv?.owner_id; link = '/dashboard'; label = pv?.name; }
     return rec && bizUser ? { guest: rec.user_id, bizUser, link, label: label || 'the business', noun: NOUN[kind] } : null;
   };
@@ -277,21 +382,32 @@ export function createBackend(io) {
   R('POST', '/payments/:id/sandbox-confirm', ({ p, user }) => { const pay = db.payments.find(x => x.id === p[0] && x.user_id === user.id); need(pay, 'Payment not found'); if (pay.status !== 'pending') return { paid: false, sandbox: true }; pay.status = 'paid'; db.stays.filter(s => s.payment_id === pay.id && s.status === 'pending').forEach(s => { s.status = 'confirmed'; stayAlert(s, 'paid'); }); return { paid: true, sandbox: true }; }, []);
   R('GET', '/bookings/mine', ({ user }) => ({
     stays: db.stays.filter(s => s.user_id === user.id).reverse().map(s => { const room = db.rooms.find(r => r.id === s.room_id), a = db.accommodations.find(x => x.id === room.accommodation_id), pay = db.payments.find(x => x.id === s.payment_id); return { id: s.id, check_in: s.check_in, check_out: s.check_out, total: s.total, status: s.status, payment_id: s.payment_id, payment_status: pay?.status, provider_ref: pay?.provider_ref, name: biz(a.business_id).name, tier: s.policy_tier || null, charged: s.charged ?? null, card: s.card ? { brand: s.card.brand, last4: s.card.last4 } : null, guarantee: s.guarantee || null, free_cancel_until: s.free_cancel_until || null, fee_charged: s.fee_charged || 0, unread_messages: unread(s.id, user.id), cancelled_by: s.cancelled_by || null, terms: s.policy_tier && ['pending', 'confirmed'].includes(s.status) ? cancelTerms(s) : null }; }),
-    rides: db.rides.filter(r => r.user_id === user.id).reverse().map(r => ({ ...r, unread_messages: unread(r.id, user.id), driver_name: db.vehicles.find(v => v.id === r.vehicle_id)?.driver_name })),
+    rides: db.rides.filter(r => r.user_id === user.id).reverse().map(r => ({ id: r.id, kind: r.kind || 'route', pickup: r.pickup, dropoff: r.dropoff, pickup_at: r.pickup_at, passengers: r.passengers, fare: r.fare, km: r.km ?? null, status: r.status, tier: r.policy_tier || null, card: r.card ? { brand: r.card.brand, last4: r.card.last4 } : null, free_cancel_until: r.free_cancel_until || null, fee_charged: r.fee_charged || 0, cancelled_by: r.cancelled_by || null, provider: rideProv(r)?.name || '', terms: r.policy_tier && ['pending', 'confirmed'].includes(r.status) ? rideCancelTerms(r) : null, unread_messages: unread(r.id, user.id), driver_name: db.vehicles.find(v => v.id === r.vehicle_id)?.driver_name })),
     tables: db.tables.filter(t => t.user_id === user.id).map(t => ({ ...t, unread_messages: unread(t.id, user.id), name: biz(db.restaurants.find(r => r.id === t.restaurant_id).business_id).name })) }), []);
   // ---- transport
   R('GET', '/transport/routes', ({ q }) => db.routes.filter(r => db.providers.find(p => p.id === r.provider_id)?.status === 'approved' && (!q.origin || r.origin.toLowerCase() === q.origin.toLowerCase())).map(r => ({ ...r, provider: db.providers.find(p => p.id === r.provider_id).name, provider_cover: db.providers.find(p => p.id === r.provider_id).cover_photo || null, vehicles: db.vehicles.filter(v => v.provider_id === r.provider_id && v.is_available) })));
-  R('POST', '/transport/book', ({ b, user }) => {
+  R('POST', '/transport/book', async ({ b, user }) => {
     const rt = db.routes.find(r => r.id === b.routeId); need(rt && new Date(b.pickupAt) > new Date() && b.passengers >= 1, 'Check your ride details');
     const v = b.vehicleId && db.vehicles.find(x => x.id === b.vehicleId); if (b.vehicleId) need(v && v.capacity >= b.passengers, 'That vehicle cannot take your group');
-    const x = { id: uid(), user_id: user.id, route_id: rt.id, vehicle_id: v?.id ?? null, pickup: rt.origin, dropoff: rt.destination, pickup_at: b.pickupAt, passengers: b.passengers, luggage: b.luggage, fare: rt.fare, status: 'pending', created_at: now() }; db.rides.push(x); const pvr = db.providers.find(y => y.id === rt.provider_id); if (pvr) notify(pvr.owner_id, { type: 'booking', title: `New ride request for ${pvr.name}`, body: `${user.full_name} · ${x.pickup} to ${x.dropoff} · ${when(x.pickup_at)} · ${x.passengers} passenger(s)`, link: '/dashboard' }, true); return { booking: { id: x.id, status: x.status } };
+    const pv = db.providers.find(y => y.id === rt.provider_id); need(pv?.status === 'approved', 'Route not available');
+    return bookRide(user, b, { pv, v, route: rt, from: { label: rt.origin }, to: { label: rt.destination }, km: null, fare: rt.fare, kind: 'route' });
+  }, []);
+  R('POST', '/transport/commute', async ({ b, user }) => { // a tricycle from point A to point B, priced by the distance
+    need(new Date(b.pickupAt) > new Date(), 'Choose a pick-up time in the future');
+    const c = commutePlan(b.vehicleId, b.from, b.to); need(Number(b.passengers) >= 1 && Number(b.passengers) <= c.v.capacity, `This tricycle seats ${c.v.capacity}`);
+    return bookRide(user, b, { pv: c.pv, v: c.v, from: c.from, to: c.to, km: c.km, fare: c.fare, kind: 'commute' });
+  }, []);
+  R('POST', '/rides/:id/cancel', ({ p, user }) => {
+    const r = db.rides.find(x => x.id === p[0] && x.user_id === user.id && ['pending', 'confirmed'].includes(x.status) && new Date(x.pickup_at) > new Date()); need(r, 'This ride can no longer be cancelled');
+    if (!r.policy_tier) { r.status = 'cancelled'; r.cancelled_by = 'guest'; r.cancelled_at = now(); return { charged: 0 }; } // requests made before the policy existed
+    const t = rideCancelTerms(r), charged = chargeCard(r, t.fee, 'late ride cancellation'); r.status = 'cancelled'; r.cancelled_by = 'guest'; r.cancelled_at = now(); rideAlert(r, 'cancelled'); return { charged };
   }, []);
   const SAID = { confirmed: 'accepted', rejected: 'declined' };
   R('GET', '/transport/provider/me', ({ user }) => { const p = provOf(user, false); if (!p) return { provider: null }; return { provider: p, page: provPage(p), vehicles: db.vehicles.filter(v => v.provider_id === p.id), routes: db.routes.filter(r => r.provider_id === p.id) }; }, ['transport_provider']);
   R('POST', '/transport/provider', ({ b, user }) => { need((b.name || '').length >= 2, 'Check your details'); const p = { id: uid(), owner_id: user.id, name: b.name, phone: b.phone, status: 'pending', created_at: now(), documents: [] }; db.providers.push(p); return { id: p.id, status: p.status }; }, ['transport_provider']);
-  R('POST', '/transport/vehicles', ({ b, user }) => { const p = provOf(user); need(p, 'Your provider account is not approved yet'); need(b.type && b.capacity >= 1, 'Check vehicle details'); need(b.rentSelf != null || b.rentDriver != null || true, ''); const v = { id: uid(), provider_id: p.id, name: b.name || b.type, type: b.type, capacity: Number(b.capacity), plate_no: b.plateNo || '', driver_name: b.driverName || '', description: b.description || '', rent_self: nn(b.rentSelf), rent_driver: nn(b.rentDriver), is_available: true, ...vehPhotos(b) }; db.vehicles.push(v); return { id: v.id }; }, ['transport_provider']);
+  R('POST', '/transport/vehicles', ({ b, user }) => { const p = provOf(user); need(p, 'Your provider account is not approved yet'); need(b.type && b.capacity >= 1, 'Check vehicle details'); need(b.rentSelf != null || b.rentDriver != null || true, ''); const v = { id: uid(), provider_id: p.id, name: b.name || b.type, type: b.type, capacity: Number(b.capacity), plate_no: b.plateNo || '', driver_name: b.driverName || '', description: b.description || '', rent_self: nn(b.rentSelf), rent_driver: nn(b.rentDriver), ...commuteOf(b, b.type), is_available: true, ...vehPhotos(b) }; db.vehicles.push(v); return { id: v.id }; }, ['transport_provider']);
   R('PUT', '/transport/vehicles/:id', ({ p, b, user }) => { const pv = provOf(user), v = pv && db.vehicles.find(x => x.id === p[0] && x.provider_id === pv.id); need(v, 'Vehicle not found'); need(b.type && Number(b.capacity) >= 1, 'Check vehicle details'); const ph = vehPhotos(b), old = refs(v);
-    Object.assign(v, { name: b.name || b.type, type: b.type, capacity: Number(b.capacity), plate_no: b.plateNo || '', driver_name: b.driverName || '', description: String(b.description || '').slice(0, 1000), rent_self: nn(b.rentSelf), rent_driver: nn(b.rentDriver), is_available: b.isAvailable !== false, ...ph }); dropOrphans(old, v); return { ok: true }; }, ['transport_provider']);
+    Object.assign(v, { name: b.name || b.type, type: b.type, capacity: Number(b.capacity), plate_no: b.plateNo || '', driver_name: b.driverName || '', description: String(b.description || '').slice(0, 1000), rent_self: nn(b.rentSelf), rent_driver: nn(b.rentDriver), ...commuteOf(b, b.type), is_available: b.isAvailable !== false, ...ph }); dropOrphans(old, v); return { ok: true }; }, ['transport_provider']);
   R('DELETE', '/transport/vehicles/:id', ({ p, user }) => { const pv = provOf(user), v = pv && db.vehicles.find(x => x.id === p[0] && x.provider_id === pv.id); need(v, 'Vehicle not found');
     need(!db.rentals.some(r => r.vehicle_id === v.id && ['pending', 'confirmed'].includes(r.status)), 'This vehicle has open rental requests. Answer them first, or switch the vehicle to unavailable instead.'); refs(v).forEach(deletePhoto); db.rentals = db.rentals.filter(r => r.vehicle_id !== v.id); db.rides.forEach(r => { if (r.vehicle_id === v.id) r.vehicle_id = null; }); db.vehicles = db.vehicles.filter(x => x !== v); return { ok: true }; }, ['transport_provider']);
   // how the transport business appears to tourists (cover photo, album, description). Works before approval; the page shows once approved.
@@ -299,8 +415,14 @@ export function createBackend(io) {
     const photos = Array.isArray(b.photos) ? b.photos.filter(Boolean) : []; need(okRef(b.cover) && photos.every(okRef), 'One of the photos is not valid'); need(photos.length <= 40, 'An album can hold up to 40 photos'); const old = refs(pv);
     Object.assign(pv, { cover_photo: b.cover || null, photos, description: String(b.description || '').slice(0, 2000), address: String(b.address || '').slice(0, 200), phone: String(b.phone || '').slice(0, 60), hours_text: String(b.hoursText || '').slice(0, 200).trim() }); dropOrphans(old, pv); return provPage(pv); }, ['transport_provider']);
   R('POST', '/transport/routes', ({ b, user }) => { const p = provOf(user); need(p, 'Your provider account is not approved yet'); need(b.origin && b.destination && b.fare >= 0, 'Check route details'); const r = { id: uid(), provider_id: p.id, origin: b.origin, destination: b.destination, fare: b.fare, est_minutes: b.estMinutes ?? null }; db.routes.push(r); return { id: r.id }; }, ['transport_provider']);
-  R('GET', '/transport/provider/bookings', ({ user }) => { const p = provOf(user); if (!p) return []; const ids = db.routes.filter(r => r.provider_id === p.id).map(r => r.id); return db.rides.filter(r => ids.includes(r.route_id)).sort((a, b) => a.pickup_at.localeCompare(b.pickup_at)).map(r => ({ ...r, full_name: db.users.find(u => u.id === r.user_id)?.full_name, payment_status: 'not tracked in demo', unread_messages: unread(r.id, user.id) })); }, ['transport_provider']);
-  R('PATCH', '/transport/bookings/:id', ({ p, b, user }) => { const pv = provOf(user); need(pv && ['confirmed', 'rejected', 'completed'].includes(b.status), 'Invalid request'); const r = db.rides.find(x => x.id === p[0] && db.routes.find(y => y.id === x.route_id)?.provider_id === pv.id); need(r, 'Booking not found'); r.status = b.status; if (SAID[b.status]) notify(r.user_id, { type: 'booking', title: `Your ride request with ${pv.name} was ${SAID[b.status]}`, body: `${r.pickup} to ${r.dropoff} · ${when(r.pickup_at)}`, link: '/bookings' }, true); }, ['transport_provider']);
+  R('GET', '/transport/provider/bookings', ({ user }) => { const p = provOf(user); if (!p) return []; return db.rides.filter(r => rideProv(r)?.id === p.id).sort((a, b) => a.pickup_at.localeCompare(b.pickup_at)).map(r => ({ ...r, card: r.card ? { brand: r.card.brand, last4: r.card.last4 } : null, kind: r.kind || 'route', full_name: db.users.find(u => u.id === r.user_id)?.full_name, payment_status: 'fare is paid to the driver', can_no_show: r.status === 'confirmed' && !!r.policy_tier && canMarkRideNoShow(r.pickup_at), unread_messages: unread(r.id, user.id) })); }, ['transport_provider']);
+  const RIDE_MOVES = { pending: ['confirmed', 'rejected'], confirmed: ['completed', 'no_show', 'cancelled'] };
+  const MOVE_SAID = { confirmed: 'accepted', rejected: 'declined', cancelled: 'cancelled', no_show: 'marked as a no-show' };
+  R('PATCH', '/transport/bookings/:id', ({ p, b, user }) => { const pv = provOf(user); need(pv && ['confirmed', 'rejected', 'completed', 'no_show', 'cancelled'].includes(b.status), 'Invalid request'); const r = db.rides.find(x => x.id === p[0] && rideProv(x)?.id === pv.id); need(r, 'Booking not found');
+    need((RIDE_MOVES[r.status] || []).includes(b.status), `A ${r.status} ride cannot be changed to ${b.status}`); let money = '';
+    if (b.status === 'no_show') { need(r.policy_tier, 'A no-show can only be recorded on a request made under the booking policy.'); need(canMarkRideNoShow(r.pickup_at), `A no-show can be marked only ${ROAM.ride.noShowGraceMinutes} minutes after the pick-up time.`); const fee = chargeCard(r, rideNoShowFee(r), 'ride no-show'); money = fee > 0 ? `${peso(fee)} was charged to the card on file.` : ''; }
+    if (['rejected', 'cancelled'].includes(b.status)) { r.cancelled_by = 'provider'; r.cancelled_at = now(); money = 'Nothing was charged.'; }
+    r.status = b.status; if (MOVE_SAID[b.status]) notify(r.user_id, { type: 'booking', title: `Your ride request with ${pv.name} was ${MOVE_SAID[b.status]}`, body: `${r.pickup} to ${r.dropoff} · ${when(r.pickup_at)}${money ? ' · ' + money : ''}`, link: '/bookings' }, true); }, ['transport_provider']);
   // ---- business owner
   R('GET', '/owner/businesses', ({ user }) => db.businesses.filter(b => b.owner_id === user.id).map(b => { const v = ownerView(b); return { id: b.id, name: b.name, status: b.status, kind: v.kind, cover: v.cover, pending: v.stats.pending }; }), ['business_owner']);
   R('POST', '/owner/accommodations', ({ b, user }) => { need(mine(user, b.businessId) && b.type, 'Business not found or not approved yet'); const a = { id: uid(), business_id: b.businessId, type: b.type, amenities: b.amenities || [] }; db.accommodations.push(a); return { id: a.id }; }, ['business_owner']);
@@ -416,8 +538,8 @@ export function createBackend(io) {
       update: (p, x) => { need((x.name || '').trim().length >= 2, 'Name is required'); const old = refs(p); Object.assign(p, { name: x.name.trim(), phone: x.phone || '', status: x.status || p.status, ...photoFields(x) }); dropOrphans(old, p); },
       remove: (p) => { refs(p).forEach(deletePhoto); (p.documents || []).forEach(d => deletePhoto(d.file)); const rid = db.routes.filter(r => r.provider_id === p.id).map(r => r.id); db.rides = db.rides.filter(r => !rid.includes(r.route_id)); db.routes = db.routes.filter(r => r.provider_id !== p.id); const vids = db.vehicles.filter(v => v.provider_id === p.id).map(v => v.id); db.vehicles.filter(v => v.provider_id === p.id).forEach(v => refs(v).forEach(deletePhoto)); db.rentals = db.rentals.filter(r => !vids.includes(r.vehicle_id)); db.vehicles = db.vehicles.filter(v => v.provider_id !== p.id); db.providers = db.providers.filter(y => y !== p); },
       subs: { vehicles: {
-        add: (p, x) => { need(x.type && Number(x.capacity) >= 1, 'Check the vehicle details'); db.vehicles.push({ id: uid(), provider_id: p.id, name: x.name || x.type, type: x.type, capacity: Number(x.capacity), plate_no: x.plateNo || '', driver_name: x.driverName || '', description: x.description || '', rent_self: nn(x.rentSelf), rent_driver: nn(x.rentDriver), ...photoFields(x), is_available: true }); },
-        upd: (p, sid, x) => { const v = db.vehicles.find(y => y.id === sid && y.provider_id === p.id); need(v, 'Not found'); need(x.type && Number(x.capacity) >= 1, 'Check the vehicle details'); const old = refs(v); Object.assign(v, { name: x.name || x.type, type: x.type, capacity: Number(x.capacity), plate_no: x.plateNo || '', driver_name: x.driverName || '', description: x.description || '', rent_self: nn(x.rentSelf), rent_driver: nn(x.rentDriver), ...photoFields(x) }); dropOrphans(old, v); },
+        add: (p, x) => { need(x.type && Number(x.capacity) >= 1, 'Check the vehicle details'); db.vehicles.push({ id: uid(), provider_id: p.id, name: x.name || x.type, type: x.type, capacity: Number(x.capacity), plate_no: x.plateNo || '', driver_name: x.driverName || '', description: x.description || '', rent_self: nn(x.rentSelf), rent_driver: nn(x.rentDriver), ...commuteOf(x, x.type), ...photoFields(x), is_available: true }); },
+        upd: (p, sid, x) => { const v = db.vehicles.find(y => y.id === sid && y.provider_id === p.id); need(v, 'Not found'); need(x.type && Number(x.capacity) >= 1, 'Check the vehicle details'); const old = refs(v); Object.assign(v, { name: x.name || x.type, type: x.type, capacity: Number(x.capacity), plate_no: x.plateNo || '', driver_name: x.driverName || '', description: x.description || '', rent_self: nn(x.rentSelf), rent_driver: nn(x.rentDriver), ...commuteOf(x, x.type), ...photoFields(x) }); dropOrphans(old, v); },
         del: (p, sid) => { refs(db.vehicles.find(v => v.id === sid) || {}).forEach(deletePhoto); db.rentals = db.rentals.filter(r => r.vehicle_id !== sid); db.rides.forEach(r => { if (r.vehicle_id === sid) r.vehicle_id = null; }); db.vehicles = db.vehicles.filter(v => !(v.id === sid && v.provider_id === p.id)); } },
         routes: {
         add: (p, x) => { need((x.origin || '').trim() && (x.destination || '').trim() && x.fare !== '' && Number(x.fare) >= 0, 'Check the route details'); db.routes.push({ id: uid(), provider_id: p.id, origin: x.origin.trim(), destination: x.destination.trim(), fare: Number(x.fare), est_minutes: nn(x.estMinutes) }); },
@@ -462,7 +584,7 @@ export function createBackend(io) {
   }
   const staysOf = (bz) => { const a = accOf(bz); return a ? db.stays.filter(s => db.rooms.find(r => r.id === s.room_id)?.accommodation_id === a.id) : []; };
   const tablesOf = (bz) => { const r = restOf(bz); return r ? db.tables.filter(t => t.restaurant_id === r.id) : []; };
-  const stayRow = (s) => { const { room, guest } = stayCtx(s), pay = db.payments.find(x => x.id === s.payment_id); return { kind: 'stay', id: s.id, guest: guest?.full_name || 'Guest', email: guest?.email || '', room: room?.name || '', check_in: String(s.check_in).slice(0, 10), check_out: String(s.check_out).slice(0, 10), nights: days(s.check_in, s.check_out), guests: s.guests, total: s.total, status: s.status, payment: pay?.status || '', created_at: s.created_at || '', tier: s.policy_tier || null, charged: s.charged ?? null, card: s.card ? { brand: s.card.brand, last4: s.card.last4 } : null, guarantee: s.guarantee || null, free_cancel_until: s.free_cancel_until || null, fee_charged: s.fee_charged || 0, can_no_show: !!s.policy_tier && s.status === 'confirmed' && canMarkNoShow(String(s.check_in).slice(0, 10)) }; };
+  const stayRow = (s) => { const { room, guest } = stayCtx(s), pay = db.payments.find(x => x.id === s.payment_id); return { kind: 'stay', id: s.id, guest: guest?.full_name || 'Guest', email: guest?.email || '', room: room?.name || '', check_in: String(s.check_in).slice(0, 10), check_out: String(s.check_out).slice(0, 10), nights: days(s.check_in, s.check_out), guests: s.guests, total: s.total, status: s.status, payment: pay?.status || '', created_at: s.created_at || '', tier: s.policy_tier || null, charged: s.charged ?? null, card: s.card ? { brand: s.card.brand, last4: s.card.last4 } : null, guarantee: s.guarantee || null, free_cancel_until: s.free_cancel_until || null, fee_charged: s.fee_charged || 0, can_no_show: !!s.policy_tier && s.status === 'confirmed' && canMarkNoShow(String(s.check_in).slice(0, 10)), id_photo: s.id_photo || null }; };
   const tableRow = (t) => { const { guest } = tableCtx(t); return { kind: 'table', id: t.id, guest: guest?.full_name || 'Guest', email: guest?.email || '', reserved_at: t.reserved_at, party_size: t.party_size, status: t.status, created_at: t.created_at || t.reserved_at }; };
   const ownerView = (bz) => {
     const k = kindOfBiz(bz), a = accOf(bz), r = restOf(bz), today = now().slice(0, 10), stays = staysOf(bz), tables = tablesOf(bz);
@@ -560,26 +682,59 @@ export function createBackend(io) {
 
   // ---- vehicle rentals (with driver or self-drive)
   const vehOk = (v) => v.is_available && db.providers.find(p => p.id === v.provider_id)?.status === 'approved';
-  const vehRow = (v) => { const p = db.providers.find(x => x.id === v.provider_id); return { papers_status: overall(p?.documents, 'transport'), cover_photo: v.cover_photo || null, photos: v.photos || [], id: v.id, name: v.name || v.type, type: v.type, capacity: v.capacity, description: v.description, rent_self: v.rent_self ?? null, rent_driver: v.rent_driver ?? null, provider: p?.name, provider_phone: p?.phone, provider_cover: p?.cover_photo || null, provider_photos: p?.photos || [], provider_description: p?.description || '', provider_address: p?.address || '', provider_hours: p?.hours_text || '' }; };
+  const vehRow = (v) => { const p = db.providers.find(x => x.id === v.provider_id); return { papers_status: overall(p?.documents, 'transport'), cover_photo: v.cover_photo || null, photos: v.photos || [], id: v.id, name: v.name || v.type, type: v.type, capacity: v.capacity, description: v.description, rent_self: v.rent_self ?? null, rent_driver: v.rent_driver ?? null, commute: commuteRates(v), provider: p?.name, provider_phone: p?.phone, provider_cover: p?.cover_photo || null, provider_photos: p?.photos || [], provider_description: p?.description || '', provider_address: p?.address || '', provider_hours: p?.hours_text || '' }; };
   const clash = (vid, a, b) => db.rentals.some(r => r.vehicle_id === vid && ['pending', 'confirmed'].includes(r.status) && r.start_date <= b && r.end_date >= a);
-  const rentRow = (r) => { const v = db.vehicles.find(x => x.id === r.vehicle_id), pay = db.payments.find(x => x.id === r.payment_id); return { id: r.id, vehicle: v?.name || 'Vehicle', type: v?.type, mode: r.mode, start_date: r.start_date, end_date: r.end_date, days: r.days, total: r.total, status: r.status, payment_id: r.payment_id, payment_status: pay?.status, pickup: r.pickup, passengers: r.passengers, driver_name: r.mode === 'driver' ? v?.driver_name : null, destinations: r.destinations.map(id => db.destinations.find(d => d.id === id)?.name).filter(Boolean), full_name: db.users.find(u => u.id === r.user_id)?.full_name }; };
+  const rentRow = (r) => { const v = db.vehicles.find(x => x.id === r.vehicle_id), pay = db.payments.find(x => x.id === r.payment_id); return { id: r.id, vehicle: v?.name || 'Vehicle', type: v?.type, mode: r.mode, start_date: r.start_date, end_date: r.end_date, days: r.days, total: r.total, status: r.status, payment_id: r.payment_id, payment_status: pay?.status, pickup: r.pickup, passengers: r.passengers, driver_name: r.mode === 'driver' ? v?.driver_name : null, destinations: r.destinations.map(id => db.destinations.find(d => d.id === id)?.name).filter(Boolean), full_name: db.users.find(u => u.id === r.user_id)?.full_name,
+    tier: r.policy_tier || null, charged: r.charged ?? null, card: r.card ? { brand: r.card.brand, last4: r.card.last4 } : null, guarantee: r.guarantee || null, free_cancel_until: r.free_cancel_until || null, fee_charged: r.fee_charged || 0, cancelled_by: r.cancelled_by || null,
+    terms: r.policy_tier && ['pending', 'confirmed'].includes(r.status) ? rentalCancelTerms(r) : null, can_no_show: !!r.policy_tier && r.status === 'confirmed' && canMarkRentalNoShow(r.start_date) }; };
   R('GET', '/rentals/vehicles', ({ q }) => db.vehicles.filter(v => vehOk(v) && (!q.type || v.type === q.type) && (q.mode !== 'driver' || v.rent_driver != null) && (q.mode !== 'self' || v.rent_self != null)).map(vehRow));
   R('GET', '/rentals/vehicles/:id', ({ p }) => { const v = db.vehicles.find(x => x.id === p[0]); need(v && vehOk(v), 'Vehicle not found'); return { ...vehRow(v), papers: papersView(db.providers.find(x => x.id === v.provider_id), 'transport') }; });
   R('GET', '/rentals/availability', ({ q }) => ({ available: !clash(q.vehicleId, q.start, q.end) }));
-  R('POST', '/rentals/book', ({ b, user }) => {
-    const v = db.vehicles.find(x => x.id === b.vehicleId); need(v && vehOk(v), 'Vehicle not available'); const rate = b.mode === 'driver' ? v.rent_driver : b.mode === 'self' ? v.rent_self : null;
-    need(rate != null, 'That option is not offered for this vehicle'); need(b.start && b.end && b.end >= b.start && b.start >= now().slice(0, 10), 'Choose valid dates');
+  // Pricing and the checks every rental shares. The quote and the booking both go through here, so the price on screen is the price charged.
+  const rentalBase = (b, v) => {
+    const rate = b.mode === 'driver' ? v.rent_driver : b.mode === 'self' ? v.rent_self : null; need(rate != null, 'That option is not offered for this vehicle');
+    need(isDate(b.start) && isDate(b.end) && b.end >= b.start && b.start >= localDate(), 'Choose valid dates'); const n = days(b.start, b.end) + 1; return { rate, n, total: rate * n };
+  };
+  R('GET', '/rentals/quote', ({ q }) => { // what a rental would owe right now (the server's clock decides)
+    const v = db.vehicles.find(x => x.id === q.vehicleId); need(v && vehOk(v), 'Vehicle not available'); const base = rentalBase({ mode: q.mode, start: q.start, end: q.end }, v);
+    return { ...rentalQuote(base.total, q.start), days: base.n, rate: base.rate, pickup_time: ROAM.rental.defaultCheckIn };
+  });
+  R('POST', '/rentals/book', async ({ b, user }) => {
+    const again = b.requestId && db.rentals.find(x => x.user_id === user.id && x.request_id === String(b.requestId)); // a repeated send never books or charges twice
+    if (again) return { rental: { id: again.id, status: again.status, total: again.total, tier: again.policy_tier, charged: again.charged, free_cancel_until: again.free_cancel_until }, payment: db.payments.find(x => x.id === again.payment_id) ?? null, replayed: true };
+    const v = db.vehicles.find(x => x.id === b.vehicleId); need(v && vehOk(v), 'Vehicle not available'); const { n, total } = rentalBase(b, v);
     need(Array.isArray(b.destinations) && b.destinations.length >= 1, 'Choose at least one destination'); need(Number(b.passengers) >= 1 && Number(b.passengers) <= v.capacity, `This vehicle seats ${v.capacity}`);
     if (b.mode === 'self') need(b.licenseOk, "Self-drive renters must confirm they hold a valid driver's license"); need(!clash(v.id, b.start, b.end), 'This vehicle is already booked on those dates');
-    const n = days(b.start, b.end) + 1, total = rate * n, pay = { id: uid(), user_id: user.id, amount: total, provider_ref: 'SBX-' + rnd(12), status: 'pending' }; db.payments.push(pay);
-    const r = { id: uid(), user_id: user.id, vehicle_id: v.id, mode: b.mode, start_date: b.start, end_date: b.end, days: n, destinations: b.destinations, pickup: b.pickup || '', passengers: Number(b.passengers), total, status: 'pending', payment_id: pay.id, created_at: now() }; db.rentals.push(r);
-    const pvr = db.providers.find(y => y.id === v.provider_id); if (pvr) notify(pvr.owner_id, { type: 'booking', title: `New rental request for ${pvr.name}`, body: `${user.full_name} · ${v.name || v.type} · ${r.start_date} to ${r.end_date} · ₱${total.toLocaleString('en-PH')}`, link: '/dashboard' }, true);
-    return { rental: { id: r.id, status: r.status, total }, payment: pay };
+    need(b.acceptPolicy === true, 'Please read and accept the booking policy first');
+    const q = rentalQuote(total, b.start); need(b.expect && b.expect.tier === q.tier && Number(b.expect.dueNow) === q.dueNow, 'The booking terms changed while you were booking. Please review them and confirm again.');
+    await needId(b, user); const card = checkCard(b.card, b.start); // throws when the card is missing, declined, or expires before pick-up
+    let pay = null; if (q.dueNow > 0) { pay = { id: uid(), user_id: user.id, amount: q.dueNow, provider_ref: 'SBX-' + rnd(12), status: 'paid', reason: q.tier === TIERS.deposit ? 'rental deposit (50%)' : 'rental paid in full' }; db.payments.push(pay); }
+    const r = { id: uid(), user_id: user.id, vehicle_id: v.id, mode: b.mode, start_date: b.start, end_date: b.end, days: n, destinations: b.destinations, pickup: b.pickup || '', passengers: Number(b.passengers), total, status: 'pending', payment_id: pay?.id ?? null, created_at: now(),
+      request_id: b.requestId ? String(b.requestId).slice(0, 64) : undefined, policy_tier: q.tier, charged: q.dueNow, card, guarantee: q.tier === TIERS.guarantee ? 'guaranteed' : 'not_needed', free_cancel_until: q.cancelUntil, reminder_at: q.reminderAt, reminder_sent: false, policy_accepted_at: now(), id_photo: b.idPhoto, id_consent_at: now() };
+    db.rentals.push(r); rentalAlert(r, 'request');
+    return { rental: { id: r.id, status: r.status, total, tier: q.tier, charged: q.dueNow, free_cancel_until: q.cancelUntil }, payment: pay };
   }, []);
   R('GET', '/rentals/mine', ({ user }) => db.rentals.filter(r => r.user_id === user.id).reverse().map(r => ({ ...rentRow(r), unread_messages: unread(r.id, user.id) })), []);
-  R('POST', '/rentals/:id/cancel', ({ p, user }) => { const r = db.rentals.find(x => x.id === p[0] && x.user_id === user.id && ['pending', 'confirmed'].includes(x.status) && x.start_date > now().slice(0, 10)); need(r, 'This rental can no longer be cancelled'); r.status = 'cancelled'; }, []);
-  R('GET', '/transport/provider/rentals', ({ user }) => { const pv = provOf(user); if (!pv) return []; const ids = db.vehicles.filter(v => v.provider_id === pv.id).map(v => v.id); return db.rentals.filter(r => ids.includes(r.vehicle_id)).map(r => ({ ...rentRow(r), unread_messages: unread(r.id, user.id) })).sort((a, b) => a.start_date.localeCompare(b.start_date)); }, ['transport_provider']);
-  R('PATCH', '/transport/rentals/:id', ({ p, b, user }) => { const pv = provOf(user); need(pv && ['confirmed', 'rejected', 'completed'].includes(b.status), 'Invalid request'); const r = db.rentals.find(x => x.id === p[0] && db.vehicles.find(v => v.id === x.vehicle_id)?.provider_id === pv.id); need(r, 'Rental not found'); r.status = b.status; if (SAID[b.status]) notify(r.user_id, { type: 'booking', title: `Your rental request with ${pv.name} was ${SAID[b.status]}`, body: `${db.vehicles.find(v => v.id === r.vehicle_id)?.name || 'Vehicle'} · ${r.start_date} to ${r.end_date}`, link: '/bookings' }, true); }, ['transport_provider']);
+  R('POST', '/rentals/:id/cancel', ({ p, user }) => {
+    const r = db.rentals.find(x => x.id === p[0] && x.user_id === user.id && ['pending', 'confirmed'].includes(x.status) && x.start_date >= localDate()); need(r, 'This rental can no longer be cancelled');
+    if (!r.policy_tier) { need(r.start_date > localDate(), 'This rental can no longer be cancelled'); r.status = 'cancelled'; return { refunded: 0, charged: 0, forfeited: 0 }; } // rentals made before the policy existed
+    const t = rentalCancelTerms(r), refunded = t.refund > 0 ? refundStay(r, 'withdrawn before the provider replied') : 0, charged = chargeCard(r, t.fee, 'late cancellation');
+    r.status = 'cancelled'; r.cancelled_by = 'guest'; r.cancelled_at = now(); rentalAlert(r, 'cancelled'); return { refunded, charged, forfeited: t.forfeited || 0 };
+  }, []);
+  R('POST', '/rentals/:id/guarantee', ({ p, b, user }) => { // replace the card on a card-guaranteed rental
+    const r = db.rentals.find(x => x.id === p[0] && x.user_id === user.id && x.policy_tier === TIERS.guarantee && ['pending', 'confirmed'].includes(x.status)); need(r, 'Rental not found');
+    r.card = checkCard(b.card, r.start_date); r.guarantee = 'guaranteed'; return { ok: true };
+  }, []);
+  R('GET', '/transport/provider/rentals', ({ user }) => { const pv = provOf(user); if (!pv) return []; const ids = db.vehicles.filter(v => v.provider_id === pv.id).map(v => v.id); return db.rentals.filter(r => ids.includes(r.vehicle_id)).map(r => ({ ...rentRow(r), id_photo: r.id_photo || null, unread_messages: unread(r.id, user.id) })).sort((a, b) => a.start_date.localeCompare(b.start_date)); }, ['transport_provider']);
+  const RENT_MOVES = { pending: ['confirmed', 'rejected'], confirmed: ['completed', 'no_show', 'cancelled'] };
+  R('PATCH', '/transport/rentals/:id', ({ p, b, user }) => { const pv = provOf(user); need(pv && ['confirmed', 'rejected', 'completed', 'no_show', 'cancelled'].includes(b.status), 'Invalid request'); const r = db.rentals.find(x => x.id === p[0] && db.vehicles.find(v => v.id === x.vehicle_id)?.provider_id === pv.id); need(r, 'Rental not found');
+    need((RENT_MOVES[r.status] || []).includes(b.status), `A ${r.status} rental cannot be changed to ${b.status}`); let money = '';
+    if (r.policy_tier) {
+      if (b.status === 'confirmed') need(r.guarantee !== 'pending', 'This rental is not guaranteed yet: the guest has to add a valid card first.');
+      if (b.status === 'no_show') { need(canMarkRentalNoShow(r.start_date), `A no-show can be marked only after ${ROAM.rental.noShowAfter} on the pick-up day.`); const fee = chargeCard(r, rentalNoShowFee(r), 'no-show'); money = fee > 0 ? `${peso(fee)} was charged to the card on file.` : `The ${peso(r.charged)} already paid is kept by the provider.`; }
+      if (['rejected', 'cancelled'].includes(b.status)) { const back = refundStay(r, `the provider ${b.status === 'rejected' ? 'declined' : 'cancelled'} the rental`); money = back > 0 ? `${peso(back)} has been refunded to you in full.` : 'Nothing was charged.'; r.cancelled_by = 'provider'; r.cancelled_at = now(); }
+    } else need(b.status !== 'no_show', 'A no-show can only be recorded on a rental made under the booking policy.');
+    r.status = b.status; if (MOVE_SAID[b.status]) notify(r.user_id, { type: 'booking', title: `Your rental request with ${pv.name} was ${MOVE_SAID[b.status]}`, body: `${db.vehicles.find(v => v.id === r.vehicle_id)?.name || 'Vehicle'} · ${r.start_date} to ${r.end_date}${money ? ' · ' + money : ''}`, link: '/bookings' }, true); }, ['transport_provider']);
 
   R('PUT', '/admin/manage/:kind/:id/:sub/:subId', ({ p, b }) => { const e = found(p[0], p[1]), s = kd(p[0]).subs?.[p[2]]; need(s?.upd, 'This item cannot be edited'); s.upd(e, p[3], b); return kd(p[0]).view(e); }, ['admin']);
 

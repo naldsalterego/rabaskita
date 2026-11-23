@@ -1,3 +1,4 @@
+import SignInPrompt from '../components/SignInPrompt.jsx';
 import { Link, useNavigate } from 'react-router-dom';
 import { Bell, CalendarCheck, Utensils, BedDouble, MessageSquare } from 'lucide-react';
 import { api } from '../lib/api.js';
@@ -7,7 +8,7 @@ const ICON = { booking: BedDouble, reservation: Utensils, message: MessageSquare
 export default function Notifications() {
   const [d, reload, err] = useLoad(() => api('/notifications')), go = useNavigate();
   const read = async (id) => { await api('/notifications/read', { method: 'POST', body: id ? { id } : {} }).catch(() => {}); reload(); refreshUnread(); };
-  if (err && !d) return <main className="mx-auto max-w-3xl px-4 py-10"><Empty>{err.includes('Sign in') ? <>Please <Link className="underline" to="/login">sign in</Link> to see your alerts.</> : err}</Empty></main>;
+  if (err && !d) return err.includes('Sign in') ? <SignInPrompt what="your alerts" /> : <main className="mx-auto max-w-3xl px-4 py-10"><Empty>{err}</Empty></main>;
   if (!d) return <p className="p-8">Loading…</p>;
   return (<main className="mx-auto max-w-3xl px-4 py-6"><PageHeader title="Alerts" sub="Bookings, reservations and replies about them." />
     <div className="mt-5 flex items-center justify-between gap-3"><p className="text-sm text-ocean/70">{d.unread > 0 ? `${d.unread} new` : 'You are all caught up.'}</p>{d.unread > 0 && <button className={btnGhost} onClick={() => read()}>Mark all as read</button>}</div>

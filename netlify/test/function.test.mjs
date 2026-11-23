@@ -4,18 +4,23 @@ import { makeHandler, makeMailer } from '../functions/handler.mjs';
 // A stand-in for Netlify Blobs. It supports conditional writes (onlyIfMatch / onlyIfNew) like the real thing, and `slow` adds small random
 // delays so that requests really do overlap, which is what exposes lost updates and double bookings.
 const mem = (slow = false, flags = {}) => {
-  const m = new Map(), tags = new Map(); let n = 0; const wait = () => (slow ? new Promise(r => setTimeout(r, Math.random() * 4)) : Promise.resolve());
+  const m = new Map(), tags = new Map(), meta = new Map(); let n = 0; const wait = () => (slow ? new Promise(r => setTimeout(r, Math.random() * 4)) : Promise.resolve());
   const put = (k, v) => { m.set(k, v); tags.set(k, 'v' + ++n); return tags.get(k); };
   return {
     get: async (k, o) => { await wait(); const v = m.get(k); if (v === undefined) return null; return o?.type === 'json' ? structuredClone(v) : v; },
-    getWithMetadata: async (k, o) => { await wait(); const v = m.get(k); if (v === undefined) return null; return { data: o?.type === 'json' ? structuredClone(v) : v, etag: tags.get(k), metadata: {} }; },
+    getWithMetadata: async (k, o) => { await wait(); const v = m.get(k); if (v === undefined) return null; return { data: o?.type === 'json' ? structuredClone(v) : v, etag: tags.get(k), metadata: meta.get(k) || {} }; },
+    getMetadata: async (k) => { await wait(); return m.has(k) ? { etag: tags.get(k), metadata: meta.get(k) || {} } : null; },
     setJSON: async (k, v, o = {}) => { await wait(); if (flags.conflict && m.has(k)) return { modified: false }; if (o.onlyIfMatch !== undefined && tags.get(k) !== o.onlyIfMatch) return { modified: false }; if (o.onlyIfNew && m.has(k)) return { modified: false }; return { modified: true, etag: put(k, structuredClone(v)) }; },
-    set: async (k, v) => { await wait(); return { modified: true, etag: put(k, v) }; },
-    delete: async (k) => { m.delete(k); }, list: async ({ prefix }) => ({ blobs: [...m.keys()].filter(k => k.startsWith(prefix)).map(key => ({ key })) }),
+    set: async (k, v, o = {}) => { await wait(); if (o.metadata) meta.set(k, o.metadata); return { modified: true, etag: put(k, v) }; },
+    delete: async (k) => { m.delete(k); meta.delete(k); }, list: async ({ prefix }) => ({ blobs: [...m.keys()].filter(k => k.startsWith(prefix)).map(key => ({ key })) }),
   };
 };
-const mk = (env = {}, { slow = false, mailer, flags } = {}) => { const store = mem(slow, flags); const h = makeHandler(() => store, env, mailer); return async (method, path, body, token, raw) => { const r = await h(new Request('https://x.test' + path, { method, headers: { ...(token && { Authorization: 'Bearer ' + token }), ...(body && !raw && { 'Content-Type': 'application/json' }) }, body: raw ? body : body && JSON.stringify(body) })); return { status: r.status, body: r.headers.get('content-type')?.includes('json') ? await r.json() : Buffer.from(await r.arrayBuffer()) }; }; };
+const mk = (env = {}, { slow = false, mailer, flags } = {}) => { const store = mem(slow, flags); const h = makeHandler(() => store, env, mailer); return async (method, path, body, token, raw, ctype) => { const r = await h(new Request('https://x.test' + path, { method, headers: { ...(token && { Authorization: 'Bearer ' + token }), ...(body && !raw && { 'Content-Type': 'application/json' }), ...(raw && ctype && { 'Content-Type': ctype }) }, body: raw ? body : body && JSON.stringify(body) })); return { status: r.status, body: r.headers.get('content-type')?.includes('json') ? await r.json() : Buffer.from(await r.arrayBuffer()) }; }; };
 const login = async (call, who, pw = 'demo1234') => (await call('POST', '/api/auth/login', { email: who + '@demo.test', password: pw })).body.token;
+
+const JPEG = Buffer.from([0xff, 0xd8, 0xff, 0xe0, 1, 2, 3, 4]);
+const uploadId = async (call, token) => (await call('POST', '/api/idphotos', JPEG, token, true, 'image/jpeg')).body.url;
+const withId = async (call, body, token) => ({ ...body, idPhoto: await uploadId(call, token), idConsent: true });
 
 test('shared backend: data is visible to every device, photos persist, roles enforced', async () => {
   const call = mk(); assert.deepEqual((await call('GET', '/api/ping')).body, { shared: true, adminLocked: false });
@@ -91,7 +96,7 @@ test('owner dashboard works through the shared backend: alerts, reservations and
   const fam = inn.rooms.find(r => r.name === 'Family room'); const d = (n) => new Date(Date.now() + n * 864e5).toISOString().slice(0, 10);
   const q = (await call('GET', `/api/bookings/quote?roomId=${fam.id}&checkIn=${d(6)}&checkOut=${d(7)}`)).body; const card = { token: 'sbx_ok_4242', brand: 'Visa', last4: '4242', expMonth: 12, expYear: 2040 };
   assert.equal((await call('POST', '/api/bookings/stay', { roomId: fam.id, checkIn: d(6), checkOut: d(7), guests: 2 }, tourist)).status, 400); // no card, no policy acceptance: refused
-  const bk = await call('POST', '/api/bookings/stay', { roomId: fam.id, checkIn: d(6), checkOut: d(7), guests: 2, acceptPolicy: true, card, expect: { tier: q.tier, dueNow: q.dueNow } }, tourist); assert.equal(bk.status, 200);
+  const bk = await call('POST', '/api/bookings/stay', await withId(call, { roomId: fam.id, checkIn: d(6), checkOut: d(7), guests: 2, acceptPolicy: true, card, expect: { tier: q.tier, dueNow: q.dueNow } }, tourist), tourist); assert.equal(bk.status, 200);
   assert.equal((await call('GET', '/api/notifications', null, owner)).body.unread, 1);
   assert.equal((await call('PATCH', '/api/owner/reservations/stay/' + bk.body.booking.id, { status: 'confirmed' }, owner)).status, 200);
   assert.equal((await call('GET', '/api/notifications', null, tourist)).body.items[0].link, '/bookings');
@@ -113,7 +118,7 @@ const bookBody = async (call, room, ci, co, extra = {}) => { const q = (await ca
 test('two guests booking the last room at the same moment: exactly one gets it', async () => {
   for (let round = 0; round < 5; round++) {
     const { call, guests, room } = await setup({}, { slow: true }), ci = day(12 + round), co = day(13 + round), body = await bookBody(call, room, ci, co);
-    const res = await Promise.all([call('POST', '/api/bookings/stay', body, guests[0]), call('POST', '/api/bookings/stay', body, guests[1])]);
+    const res = await Promise.all(guests.slice(0, 2).map(async g => call('POST', '/api/bookings/stay', await withId(call, body, g), g)));
     assert.deepEqual(res.map(r => r.status).sort(), [200, 400], `round ${round}: ${JSON.stringify(res.map(r => r.body))}`);
     assert.match(res.find(r => r.status === 400).body.error, /just taken/);
     const winner = res.findIndex(r => r.status === 200), mineW = (await call('GET', '/api/bookings/mine', null, guests[winner])).body.stays, mineL = (await call('GET', '/api/bookings/mine', null, guests[1 - winner])).body.stays;
@@ -122,23 +127,23 @@ test('two guests booking the last room at the same moment: exactly one gets it',
 });
 test('eight guests racing for a room with two units: exactly two get one, and every booking is really saved', async () => {
   const { call, guests, std } = await setup({}, { slow: true }), ci = day(15), co = day(16), body = await bookBody(call, std, ci, co);
-  const res = await Promise.all(guests.map(g => call('POST', '/api/bookings/stay', body, g)));
+  const res = await Promise.all(guests.map(async g => call('POST', '/api/bookings/stay', await withId(call, body, g), g)));
   assert.equal(res.filter(r => r.status === 200).length, 2, JSON.stringify(res.map(r => r.status))); assert.ok(res.filter(r => r.status !== 200).every(r => /just taken/.test(r.body.error)));
   const saved = (await Promise.all(guests.map(g => call('GET', '/api/bookings/mine', null, g)))).reduce((t, r) => t + r.body.stays.length, 0); assert.equal(saved, 2);
 });
 test('a request that has to be repeated never sends its email twice', async () => {
   const sent = [], { call, guests, std } = await setup({}, { slow: true, mailer: async (m) => { sent.push(m); } }); sent.length = 0;
-  const body = await bookBody(call, std, day(18), day(19)), res = await Promise.all(guests.map(g => call('POST', '/api/bookings/stay', body, g)));
+  const body = await bookBody(call, std, day(18), day(19)), res = await Promise.all(guests.map(async g => call('POST', '/api/bookings/stay', await withId(call, body, g), g)));
   const ok = res.filter(r => r.status === 200).length; assert.equal(ok, 2);
   assert.equal(sent.filter(m => m.to === 'owner@demo.test').length, ok); // one alert per booking that really happened, none for attempts that were repeated or refused
 });
 test('a repeated booking request over the shared backend returns the same booking', async () => {
   const { call, guests, std } = await setup({}), body = await bookBody(call, std, day(25), day(26), { requestId: 'req-1' });
-  const [a, b] = [await call('POST', '/api/bookings/stay', body, guests[0]), await call('POST', '/api/bookings/stay', body, guests[0])];
+  const idBody = await withId(call, body, guests[0]), [a, b] = [await call('POST', '/api/bookings/stay', idBody, guests[0]), await call('POST', '/api/bookings/stay', idBody, guests[0])];
   assert.equal(a.status, 200); assert.equal(b.body.booking.id, a.body.booking.id); assert.equal((await call('GET', '/api/bookings/mine', null, guests[0])).body.stays.length, 1);
 });
 test('nothing is lost when many people write at once: every message from both sides is kept', async () => {
-  const { call, owner, guests, room } = await setup({}, { slow: true }), ci = day(20), co = day(21), id = (await call('POST', '/api/bookings/stay', await bookBody(call, room, ci, co), guests[0])).body.booking.id;
+  const { call, owner, guests, room } = await setup({}, { slow: true }), ci = day(20), co = day(21), id = (await call('POST', '/api/bookings/stay', await withId(call, await bookBody(call, room, ci, co), guests[0]), guests[0])).body.booking.id;
   await Promise.all([...Array.from({ length: 4 }, (_, i) => call('POST', `/api/messages/stay/${id}`, { body: `guest ${i}` }, guests[0])), ...Array.from({ length: 4 }, (_, i) => call('POST', `/api/messages/stay/${id}`, { body: `owner ${i}` }, owner)),
     ...guests.slice(1, 5).map((g, i) => call('POST', '/api/auth/register', { email: `late${i}@example.com`, password: 'Passw0rd!x', fullName: 'Late', role: 'tourist' }))]);
   const th = (await call('GET', `/api/messages/stay/${id}`, null, guests[0])).body.messages.map(m => m.body).sort();
@@ -152,4 +157,19 @@ test('if the data is too busy to save, the guest gets a clear "try again" and no
   assert.equal(r.status, 503); assert.match(r.body.error, /busy/); flags.conflict = false;
   assert.equal((await call('POST', '/api/auth/login', { email: 'busy@example.com', password: 'Passw0rd!x' })).status, 401); // the sign-up was not half-saved
   assert.equal((await call('POST', '/api/auth/register', { email: 'busy@example.com', password: 'Passw0rd!x', fullName: 'Busy Guest', role: 'tourist' })).status, 200); // and trying again works
+});
+
+test('ID photos are private: signed-in upload only, images only, opened only by the guest, the business it went to, or the tourism office', async () => {
+  const { call, owner, guests, room } = await setup({}); const [g1, g2] = guests, admin = await login(call, 'admin'), other = await login(call, 'provider');
+  assert.equal((await call('POST', '/api/idphotos', JPEG, null, true, 'image/jpeg')).status, 401); // not signed in
+  assert.equal((await call('POST', '/api/idphotos', JPEG, g1, true, 'application/pdf')).status, 400); // not an image
+  assert.equal((await call('POST', '/api/idphotos', Buffer.from('not an image at all'), g1, true, 'image/jpeg')).status, 400); // says image, is not one
+  const url = await uploadId(call, g1); assert.match(url, /^\/api\/idphotos\/[\w-]+$/);
+  assert.equal((await call('GET', url, null, g1)).status, 404); // not attached to any booking yet: nobody can open it
+  const ci = day(30), co = day(31), body = await bookBody(call, room, ci, co);
+  assert.equal((await call('POST', '/api/bookings/stay', { ...body, idPhoto: url, idConsent: true }, g2)).status, 400); // another guest cannot attach it
+  const bk = await call('POST', '/api/bookings/stay', { ...body, idPhoto: url, idConsent: true }, g1); assert.equal(bk.status, 200);
+  const mine = await call('GET', url, null, g1); assert.equal(mine.status, 200); assert.deepEqual(mine.body, JPEG); assert.equal((await call('GET', url, null, owner)).status, 200); assert.equal((await call('GET', url, null, admin)).status, 200);
+  assert.equal((await call('GET', url)).status, 401); assert.equal((await call('GET', url, null, g2)).status, 403); assert.equal((await call('GET', url, null, other)).status, 403);
+  const raw = await call('GET', '/api/photos/' + url.split('/').pop()); assert.equal(raw.status, 404); // never reachable through the public album route
 });

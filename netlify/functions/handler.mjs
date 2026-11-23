@@ -38,12 +38,13 @@ export function makeHandler(getStore, env = {}, mailer = makeMailer(env)) {
         adminPassword: () => env.ADMIN_PASSWORD || 'demo1234',
         email: mailer ? async (m) => { outbox.push(m); } : undefined, siteUrl: () => url.origin,
         deletePhoto: async (ref) => { photoDeletes.push(ref); },
+        ownsIdPhoto: async (ref, userId) => { const m = String(ref).match(/^\/api\/idphotos\/([\w-]+)$/); if (!m) return false; const md = await store.getMetadata('idphoto/' + m[1]); return md?.metadata?.owner === userId; },
         wipePhotos: async () => { wipe = true; },
       });
       const flush = () => Promise.allSettled([
         ...outbox.map(m => mailer(m)),
-        ...photoDeletes.map(async (ref) => { const m = String(ref).match(/\/api\/photos\/([\w-]+(?:\.(?:png|pdf))?)$/); if (m) await store.delete('photo/' + m[1]); }),
-        wipe && (async () => { const { blobs } = await store.list({ prefix: 'photo/' }); await Promise.all(blobs.map(b => store.delete(b.key))); })(),
+        ...photoDeletes.map(async (ref) => { const m = String(ref).match(/\/api\/(photos|idphotos)\/([\w-]+(?:\.(?:png|pdf))?)$/); if (m) await store.delete((m[1] === 'idphotos' ? 'idphoto/' : 'photo/') + m[2]); }),
+        wipe && (async () => { for (const prefix of ['photo/', 'idphoto/']) { const { blobs } = await store.list({ prefix }); await Promise.all(blobs.map(b => store.delete(b.key))); } })(),
       ].filter(Boolean));
       return { be, flush };
     };
@@ -54,16 +55,36 @@ export function makeHandler(getStore, env = {}, mailer = makeMailer(env)) {
         const buf = await req.arrayBuffer(); if (!buf.byteLength) return json({ error: 'Empty image' }, 400); if (buf.byteLength > 5.5e6) return json({ error: 'Image is too large' }, 413);
         const id = crypto.randomUUID() + (/png/.test(req.headers.get('content-type') || '') ? '.png' : /pdf/.test(req.headers.get('content-type') || '') ? '.pdf' : ''); await store.set('photo/' + id, buf); return json({ url: '/api/photos/' + id });
       }
-      const body = ['POST', 'PUT', 'PATCH'].includes(req.method) ? await req.json().catch(() => ({})) : undefined;
-      for (let tries = 1; ; tries++) {
-        const { be, flush } = open();
-        try { const out = await be.handle(req.method, path + url.search, body); await flush(); return json(out); }
-        catch (e) {
-          if (!(e instanceof Conflict)) throw e;
-          if (tries >= MAX_TRIES) throw new Error('The system is busy right now. Please try again in a moment.');
-          await new Promise(r => setTimeout(r, Math.random() * 25 * tries)); // a short random pause so the competing requests do not collide again in lockstep
+      // Runs one request against fresh data, and again from fresh data if somebody else saved in between.
+      const run = async (fn) => {
+        for (let tries = 1; ; tries++) {
+          const { be, flush } = open();
+          try { const out = await fn(be); await flush(); return out; }
+          catch (e) {
+            if (!(e instanceof Conflict)) throw e;
+            if (tries >= MAX_TRIES) throw new Error('The system is busy right now. Please try again in a moment.');
+            await new Promise(r => setTimeout(r, Math.random() * 25 * tries)); // a short random pause so the competing requests do not collide again in lockstep
+          }
         }
+      };
+      // ID photos live apart from the public photo album. They can only be uploaded by a signed-in person, and opened by the guest, the business
+      // or provider the booking went to, or the tourism office (the backend decides, and logs every opening by someone else).
+      if (path === '/idphotos' && req.method === 'POST') {
+        const { be } = open(); const user = await be.whoami(); if (!user) return json({ error: 'Sign in required' }, 401);
+        const type = (req.headers.get('content-type') || '').split(';')[0].trim(); if (!['image/jpeg', 'image/png', 'image/webp'].includes(type)) return json({ error: 'Please upload a JPG, PNG or WebP photo of your ID.' }, 400);
+        const buf = await req.arrayBuffer(); if (!buf.byteLength) return json({ error: 'Empty image' }, 400); if (buf.byteLength > 5.5e6) return json({ error: 'Image is too large' }, 413);
+        const b = new Uint8Array(buf), sniff = (b[0] === 0xFF && b[1] === 0xD8) || (b[0] === 0x89 && b[1] === 0x50 && b[2] === 0x4E && b[3] === 0x47) || (b[0] === 0x52 && b[1] === 0x49 && b[2] === 0x46 && b[3] === 0x46 && b[8] === 0x57 && b[9] === 0x45);
+        if (!sniff) return json({ error: 'That file is not a valid image.' }, 400);
+        const id = crypto.randomUUID(); await store.set('idphoto/' + id, buf, { metadata: { owner: user.id, type } }); return json({ url: '/api/idphotos/' + id });
       }
+      const idm = path.match(/^\/idphotos\/([\w-]+)$/);
+      if (idm && req.method === 'GET') {
+        await run(be => be.handle('POST', `/idphotos/${idm[1]}/view`, {})); // throws Sign in / Forbidden / Not found
+        const r = await store.getWithMetadata('idphoto/' + idm[1], { type: 'arrayBuffer' }); if (!r) return new Response('Not found', { status: 404 });
+        return new Response(r.data, { headers: { 'Content-Type': r.metadata?.type || 'image/jpeg', 'Content-Disposition': 'inline', 'Cache-Control': 'private, no-store', 'X-Content-Type-Options': 'nosniff' } });
+      }
+      const body = ['POST', 'PUT', 'PATCH'].includes(req.method) ? await req.json().catch(() => ({})) : undefined;
+      return json(await run(be => be.handle(req.method, path + url.search, body)));
     } catch (e) { return json({ error: e.message }, statusFor(e.message)); }
   };
 }

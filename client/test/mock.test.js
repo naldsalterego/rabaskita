@@ -5,8 +5,12 @@ const { handle } = await import('../src/lib/mock.js');
 const login = async (e) => { const r = await handle('POST', '/auth/login', { email: e + '@demo.test', password: 'demo1234' }); localStorage.setItem('token', r.token); return r; };
 const fails = (p, re) => assert.rejects(p, re);
 const CARD = { token: 'sbx_ok_4242', brand: 'Visa', last4: '4242', expMonth: 12, expYear: 2040 };
+const ID = { idPhoto: 'idb:test-id-photo-0001', idConsent: true };
+// Roam requests the way the site sends them: ask for today's terms, then confirm exactly those terms with a card and a photo of an ID.
+const rideReq = async (h, body, path = '/transport/book') => { const q = await h('GET', `/transport/ride-quote?${body.routeId ? 'routeId=' + body.routeId : `vehicleId=${body.vehicleId}&from=${encodeURIComponent(body.from)}&to=${encodeURIComponent(body.to)}`}&pickupAt=${encodeURIComponent(body.pickupAt)}`); return h('POST', path, { ...body, acceptPolicy: true, card: CARD, ...ID, expect: { fare: q.fare } }); };
+const rentReq = async (h, body) => { const q = await h('GET', `/rentals/quote?vehicleId=${body.vehicleId}&mode=${body.mode}&start=${body.start}&end=${body.end}`); return h('POST', '/rentals/book', { ...body, acceptPolicy: true, card: CARD, ...ID, expect: { tier: q.tier, dueNow: q.dueNow } }); };
 // Book a stay the way the site does: ask the server for the current terms, then confirm exactly those terms with a card.
-const stay = async (h, roomId, ci, co, guests, extra = {}) => { const q = await h('GET', `/bookings/quote?roomId=${roomId}&checkIn=${ci}&checkOut=${co}`); return h('POST', '/bookings/stay', { roomId, checkIn: ci, checkOut: co, guests, acceptPolicy: true, card: CARD, expect: { tier: q.tier, dueNow: q.dueNow }, ...extra }); };
+const stay = async (h, roomId, ci, co, guests, extra = {}) => { const q = await h('GET', `/bookings/quote?roomId=${roomId}&checkIn=${ci}&checkOut=${co}`); return h('POST', '/bookings/stay', { roomId, checkIn: ci, checkOut: co, guests, acceptPolicy: true, card: CARD, ...ID, expect: { tier: q.tier, dueNow: q.dueNow }, ...extra }); };
 const tokenFor = async (listingId) => { await login('admin'); const t = (await handle('GET', '/admin/qr')).find(q => q.listing_id === listingId).token; await login('tourist'); return t; };
 test('demo flows work end to end', async () => {
   await fails(handle('GET', '/checkin/me'), /Sign in/);
@@ -67,7 +71,7 @@ test('vehicle rental with and without driver', async () => {
   await fails(handle('POST', '/rentals/book', { vehicleId: van.id, mode: 'self', start: day(3), end: day(4), destinations: dests, passengers: 2, licenseOk: true }), /not offered/);
   await fails(handle('POST', '/rentals/book', { vehicleId: car.id, mode: 'self', start: day(3), end: day(4), destinations: dests, passengers: 2 }), /license/);
   await fails(handle('POST', '/rentals/book', { vehicleId: car.id, mode: 'driver', start: day(3), end: day(4), destinations: [], passengers: 2 }), /destination/);
-  const r = await handle('POST', '/rentals/book', { vehicleId: van.id, mode: 'driver', start: day(3), end: day(5), destinations: dests.slice(0, 2), passengers: 6 }); assert.equal(r.rental.total, 3500 * 3);
+  const r = await rentReq(handle, { vehicleId: van.id, mode: 'driver', start: day(3), end: day(5), destinations: dests.slice(0, 2), passengers: 6 }); assert.equal(r.rental.total, 3500 * 3);
   await fails(handle('POST', '/rentals/book', { vehicleId: van.id, mode: 'driver', start: day(5), end: day(6), destinations: dests, passengers: 2 }), /already booked/);
   assert.equal((await handle('GET', `/rentals/availability?vehicleId=${van.id}&start=${day(3)}&end=${day(3)}`)).available, false);
   const mine = await handle('GET', '/rentals/mine'); assert.equal(mine[0].mode, 'driver'); assert.equal(mine[0].driver_name, 'Demo Driver'); assert.equal(mine[0].destinations.length, 2);

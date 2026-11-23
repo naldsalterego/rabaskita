@@ -5,13 +5,17 @@ import { localDate } from '../src/lib/policy.js';
 
 const fails = (p, re) => assert.rejects(p, re);
 const CARD = { token: 'sbx_ok_4242', brand: 'Visa', last4: '4242', expMonth: 12, expYear: 2040 };
+const ID = { idPhoto: 'idb:test-id-photo-0001', idConsent: true };
+// Roam requests the way the site sends them: ask for today's terms, then confirm exactly those terms with a card and a photo of an ID.
+const rideReq = async (h, body, path = '/transport/book') => { const q = await h('GET', `/transport/ride-quote?${body.routeId ? 'routeId=' + body.routeId : `vehicleId=${body.vehicleId}&from=${encodeURIComponent(body.from)}&to=${encodeURIComponent(body.to)}`}&pickupAt=${encodeURIComponent(body.pickupAt)}`); return h('POST', path, { ...body, acceptPolicy: true, card: CARD, ...ID, expect: { fare: q.fare } }); };
+const rentReq = async (h, body) => { const q = await h('GET', `/rentals/quote?vehicleId=${body.vehicleId}&mode=${body.mode}&start=${body.start}&end=${body.end}`); return h('POST', '/rentals/book', { ...body, acceptPolicy: true, card: CARD, ...ID, expect: { tier: q.tier, dueNow: q.dueNow } }); };
 const add = (d, n) => new Date(new Date(d + 'T00:00:00Z').getTime() + n * 864e5).toISOString().slice(0, 10);
 const D = add(localDate(), 20); // far enough ahead that every booking is a plain card-guaranteed one
 const mkBackend = () => {
   let db = seed(), tok = ''; const be = createBackend({ token: () => tok, load: async () => structuredClone(db), save: async d => { db = structuredClone(d); } });
   return { h: be.handle, get db() { return db; }, as: async (who) => { tok = (await be.handle('POST', '/auth/login', { email: who + '@demo.test', password: 'demo1234' })).token; } };
 };
-const book = async (t, roomId, ci, co) => { const q = await t.h('GET', `/bookings/quote?roomId=${roomId}&checkIn=${ci}&checkOut=${co}`); return t.h('POST', '/bookings/stay', { roomId, checkIn: ci, checkOut: co, guests: 2, acceptPolicy: true, card: CARD, expect: { tier: q.tier, dueNow: q.dueNow } }); };
+const book = async (t, roomId, ci, co) => { const q = await t.h('GET', `/bookings/quote?roomId=${roomId}&checkIn=${ci}&checkOut=${co}`); return t.h('POST', '/bookings/stay', { roomId, checkIn: ci, checkOut: co, guests: 2, acceptPolicy: true, card: CARD, ...ID, expect: { tier: q.tier, dueNow: q.dueNow } }); };
 const std = (t) => t.db.rooms.find(r => r.name === 'Standard room'); // two units
 const bid = (t) => t.db.businesses.find(b => b.name.startsWith('Seaside')).id;
 const accId = (t) => t.db.accommodations.find(a => a.business_id === bid(t)).id;

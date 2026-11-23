@@ -8,6 +8,8 @@ import DestMap from '../components/DestMap.jsx';
 import Album, { albumOf, CountBadge } from '../components/Album.jsx';
 import { Empty, btn, inp } from '../components/ui.jsx';
 import { Photo } from '../components/Photo.jsx';
+import Commute from './Commute.jsx';
+import { RoamDialog, RoamPolicySummary } from '../components/RoamBooking.jsx';
 import { PapersPublic, PaperChip } from '../components/Docs.jsx';
 import { Banner, Fact, Section, Err, useOne } from './Listings.jsx';
 const ICON = { motorcycle: Bike, tricycle: Bike, car: Car, van: Bus, multicab: Truck, other: Car };
@@ -18,11 +20,11 @@ const cheapest = (v) => Math.min(...[v.rent_self, v.rent_driver].filter(x => x !
 const chip = (on) => `shrink-0 whitespace-nowrap rounded-full border px-4 py-1.5 text-sm ${on ? 'border-ocean bg-ocean text-foam' : 'border-line bg-white hover:border-teal'}`;
 
 export default function Transport() {
-  const [sp, setSp] = useSearchParams(); const tab = sp.get('tab') === 'rides' ? 'rides' : 'rent';
+  const [sp, setSp] = useSearchParams(); const t = sp.get('tab'), tab = t === 'rides' || t === 'commute' ? t : 'rent';
   return (<main className="mx-auto max-w-6xl px-4 py-8">
-    <h1 className="font-display text-4xl md:text-5xl">Rent a ride</h1><p className="mt-1 text-ocean/75">Pick a vehicle, choose where you're going, and rent it with a driver or drive it yourself.</p>
-    <div className="mt-5 flex gap-2"><button className={chip(tab === 'rent')} onClick={() => setSp({})}>Rent a vehicle</button><button className={chip(tab === 'rides')} onClick={() => setSp({ tab: 'rides' })}>Airport and port rides</button></div>
-    {tab === 'rent' ? <Rent /> : <Rides />}</main>);
+    <h1 className="font-display text-4xl md:text-5xl">Rent a ride</h1><p className="mt-1 text-ocean/75">Rent a vehicle for the day, or take a tricycle from one place to another and pay by the distance.</p>
+    <div className="mt-5 flex gap-2 overflow-x-auto"><button className={chip(tab === 'rent')} onClick={() => setSp({})}>Rent a vehicle</button><button className={chip(tab === 'commute')} onClick={() => setSp({ tab: 'commute' })}>Tricycle commute</button><button className={chip(tab === 'rides')} onClick={() => setSp({ tab: 'rides' })}>Airport and port rides</button></div>
+    {tab === 'rent' ? <Rent /> : tab === 'commute' ? <Commute goRent={() => setSp({})} /> : <Rides />}</main>);
 }
 
 function Rent() {
@@ -43,7 +45,7 @@ function Rent() {
 
 export function VehicleDetail() {
   const { id } = useParams(), [v, err] = useOne(`/rentals/vehicles/${id}`), [dests, setDests] = useState([]), today = new Date().toISOString().slice(0, 10);
-  const [f, setF] = useState({ mode: '', start: '', end: '', pickup: 'Virac Airport', pax: 1, sel: [], license: false }), [free, setFree] = useState(null), [msg, setMsg] = useState(null);
+  const [f, setF] = useState({ mode: '', start: '', end: '', pickup: 'Virac Airport', pax: 1, sel: [], license: false }), [free, setFree] = useState(null), [msg, setMsg] = useState(null), [dlg, setDlg] = useState(false);
   const ver = useSyncVersion();
   useEffect(() => { api('/destinations').then(setDests).catch(() => {}); }, [ver]);
   useEffect(() => { if (v && !f.mode) setF(x => ({ ...x, mode: v.rent_driver != null ? 'driver' : 'self' })); }, [v]);
@@ -53,7 +55,6 @@ export function VehicleDetail() {
   const rate = f.mode === 'driver' ? v.rent_driver : v.rent_self, total = rate != null && nDays ? rate * nDays : 0;
   const toggle = (did) => setF(x => ({ ...x, sel: x.sel.includes(did) ? x.sel.filter(y => y !== did) : [...x.sel, did] }));
   const chosen = dests.filter(d => f.sel.includes(d.id)), can = valid && free !== false && f.sel.length > 0 && rate != null && (f.mode !== 'self' || f.license);
-  async function book() { try { await api('/rentals/book', { method: 'POST', body: { vehicleId: id, mode: f.mode, start: f.start, end: f.end, destinations: f.sel, pickup: f.pickup, passengers: Number(f.pax), licenseOk: f.license } }); setMsg({ ok: true }); } catch (e) { setMsg({ text: e.message.includes('Sign in') ? 'Please sign in to rent a vehicle.' : e.message }); } }
   const lab = 'grid gap-1 text-xs font-medium text-ocean/60';
   return (<main><Banner name={v.name} photo={v.cover_photo || v.photos?.[0]} sub={`${cap(v.type)} · ${v.provider}`} badge={`from ${peso(cheapest(v))}/day`} />
     <div className="mx-auto grid max-w-5xl gap-8 px-4 py-8 lg:grid-cols-3"><div className="lg:col-span-2">
@@ -62,6 +63,8 @@ export function VehicleDetail() {
         <p className="mt-2 text-xs text-ocean/60">Ask the provider what is included (fuel, tolls, meals) before you travel.</p></Section>
       {albumOf(v).length > 0 && <Section title="Photos of this vehicle"><Album photos={albumOf(v)} name={v.name} /></Section>}<Section title={`${v.provider}'s business papers`}><PapersPublic papers={v.papers} /></Section>{(v.provider_description || albumOf({ cover_photo: v.provider_cover, photos: v.provider_photos }).length > 0) && <Section title={`From ${v.provider}`}>{v.provider_description && <p className="mb-3 whitespace-pre-line text-sm">{v.provider_description}</p>}{(v.provider_address || v.provider_hours || v.provider_phone) && <p className="mb-3 text-sm text-ocean/70">{[v.provider_address, v.provider_hours, v.provider_phone].filter(Boolean).join(' · ')}</p>}<Album photos={albumOf({ cover_photo: v.provider_cover, photos: v.provider_photos })} name={v.provider} /></Section>}<Section title="Where do you want to go?"><p className="mb-3 text-sm text-ocean/70">Pick one or more destinations for this rental.</p>
         <div className="grid gap-2 sm:grid-cols-2">{dests.map(d => { const on = f.sel.includes(d.id); return <button key={d.id} type="button" aria-pressed={on} onClick={() => toggle(d.id)} className={`flex items-center gap-3 rounded-2xl border p-3 text-left text-sm ${on ? 'border-ocean bg-ocean text-foam' : 'border-line bg-white hover:border-teal'}`}><span className={`grid h-6 w-6 shrink-0 place-items-center rounded-full ${on ? 'bg-sun text-ocean' : 'bg-foam'}`}>{on && <Check size={14} />}</span><span><b>{d.name}</b><br /><span className="opacity-70">{d.municipality}{d.travel_minutes_from_virac != null && ` · ${d.travel_minutes_from_virac} min from Virac`}</span></span></button>; })}</div></Section>
+      {v.commute && <Section title="Just need a ride from A to B?"><p className="text-sm">This tricycle also takes commute rides, priced by the distance: {peso(v.commute.base)} for the first {v.commute.baseKm} km, then {peso(v.commute.perKm)} for each extra km. <Link className="underline" to="/transportation?tab=commute">Plan a commute</Link></p></Section>}
+      <Section title="Booking policy"><RoamPolicySummary show={['rental']} /></Section>
       <Section title="Your trip on the map">{chosen.length ? <div className="overflow-hidden rounded-3xl border border-line"><DestMap items={chosen} className="h-72" /></div> : <Empty>Choose destinations above to see them here.</Empty>}</Section></div>
     <aside><div className="grid gap-4 rounded-3xl border border-line bg-white p-5 lg:sticky lg:top-24"><p className="font-display text-2xl">Rent this vehicle</p>
       <div className="grid grid-cols-2 gap-2">{[['driver', 'With driver', UserRound, v.rent_driver], ['self', 'Self-drive', KeyRound, v.rent_self]].map(([m, l, I, r]) => <button key={m} type="button" disabled={r == null} onClick={() => setF({ ...f, mode: m })} className={`rounded-2xl border p-3 text-left text-sm disabled:opacity-40 ${f.mode === m && r != null ? 'border-ocean bg-ocean text-foam' : 'border-line'}`}><I size={18} /><b className="mt-1 block">{l}</b>{r != null ? `${peso(r)}/day` : 'Not offered'}</button>)}</div>
@@ -72,17 +75,19 @@ export function VehicleDetail() {
       {f.mode === 'self' && <label className="flex items-start gap-2 text-sm"><input type="checkbox" className="mt-1" checked={f.license} onChange={e => setF({ ...f, license: e.target.checked })} />I confirm I hold a valid driver's license.</label>}
       <div className="rounded-2xl bg-foam p-3 text-sm">{nDays > 0 && rate != null ? <><p>{nDays} day{nDays > 1 ? 's' : ''} × {peso(rate)}</p><p className="font-display text-2xl">{peso(total)}</p></> : <p className="text-ocean/60">Choose your dates to see the price.</p>}
         {free === false && <p className="mt-1 text-red-700">Already booked on those dates.</p>}{free === true && <p className="mt-1 text-teal">Available on those dates.</p>}</div>
-      <button disabled={!can} onClick={book} className={`${btn} py-3 disabled:opacity-40`}>{f.sel.length === 0 ? 'Choose a destination' : 'Request rental'}</button>
-      {msg && <p role="status" className={`rounded-xl p-3 text-sm ${msg.ok ? 'bg-teal/10' : 'bg-red-50 text-red-800'}`}>{msg.ok ? <>Request sent. <Link className="underline" to="/bookings">Open My bookings</Link> to pay and track it.</> : msg.text}</p>}
-      <p className="text-xs text-ocean/55">Payment in this prototype is simulated.</p></div></aside></div></main>);
+      <button disabled={!can} onClick={() => { setMsg(null); setDlg(true); }} className={`${btn} py-3 disabled:opacity-40`}>{f.sel.length === 0 ? 'Choose a destination' : 'Request rental'}</button>
+      {msg && <p role="status" className={`rounded-xl p-3 text-sm ${msg.ok ? 'bg-teal/10' : 'bg-red-50 text-red-800'}`}>{msg.ok ? <>Request sent. The provider will confirm it. <Link className="underline" to="/bookings">Open My bookings</Link> to track it.</> : msg.text}</p>}
+      <p className="text-xs text-ocean/55">Payment in this prototype is simulated.</p></div></aside></div>
+    {dlg && <RoamDialog kind="rental" title="Request to rent" sub={`${v.name} · ${v.provider}`} summary={`${f.start} to ${f.end} · ${nDays} day${nDays === 1 ? '' : 's'} · ${f.mode === 'driver' ? 'with driver' : 'self-drive'} · ${f.pax} passenger${Number(f.pax) === 1 ? '' : 's'} · Total ${peso(total)}`} who="the provider"
+      quotePath={`/rentals/quote?vehicleId=${id}&mode=${f.mode}&start=${f.start}&end=${f.end}`} postPath="/rentals/book" payload={{ vehicleId: id, mode: f.mode, start: f.start, end: f.end, destinations: f.sel, pickup: f.pickup, passengers: Number(f.pax), licenseOk: f.license }}
+      onClose={() => setDlg(false)} onDone={() => { setDlg(false); setMsg({ ok: true }); }} />}</main>);
 }
 
 const HUBS = [['Virac Airport', Plane], ['San Andres Port', Ship], ['Virac Port', Ship]];
 function Rides() {
-  const [origin, setOrigin] = useState(HUBS[0][0]), [routes, setRoutes] = useState(null), [when, setWhen] = useState(''), [pax, setPax] = useState(2), [msg, setMsg] = useState(null);
+  const [origin, setOrigin] = useState(HUBS[0][0]), [routes, setRoutes] = useState(null), [when, setWhen] = useState(''), [pax, setPax] = useState(2), [msg, setMsg] = useState(null), [dlg, setDlg] = useState(null);
   const ver = useSyncVersion();
   useEffect(() => { api(`/transport/routes?origin=${encodeURIComponent(origin)}`).then(setRoutes).catch(() => setRoutes([])); }, [origin, ver]);
-  async function book(routeId) { try { await api('/transport/book', { method: 'POST', body: { routeId, pickupAt: new Date(when).toISOString(), passengers: Number(pax) } }); setMsg({ ok: 1 }); } catch (e) { setMsg({ text: e.message.includes('Sign in') ? 'Please sign in to request a ride.' : e.message }); } }
   const now = new Date(Date.now() - new Date().getTimezoneOffset() * 6e4).toISOString().slice(0, 16);
   return (<div className="mt-5">
     <div className="grid gap-3 sm:grid-cols-3">{HUBS.map(([h, I]) => <button key={h} onClick={() => setOrigin(h)} className={`lift flex items-center gap-3 rounded-3xl border p-4 text-left ${origin === h ? 'border-ocean bg-ocean text-foam' : 'border-line bg-white'}`}><span className={`grid h-11 w-11 place-items-center rounded-2xl ${origin === h ? 'bg-white/20' : 'bg-teal/10 text-teal'}`}><I size={20} /></span><span><span className="block text-xs opacity-70">Pickup</span><b>{h}</b></span></button>)}</div>
@@ -92,5 +97,9 @@ function Rides() {
     {msg && <p role="status" className={`mt-4 rounded-xl p-3 text-sm ${msg.ok ? 'bg-teal/10' : 'bg-red-50 text-red-800'}`}>{msg.ok ? <>Request sent. The driver will confirm it. <Link to="/bookings" className="underline">See My bookings</Link></> : msg.text}</p>}
     <div className="mt-5 grid gap-4">{routes === null ? <p>Loading…</p> : routes.length === 0 ? <Empty Icon={Bus}>No registered providers serve this pickup yet.</Empty> : routes.map(r => <article key={r.id} className="lift flex flex-wrap items-center justify-between gap-4 rounded-3xl border border-line bg-white p-5">
       <div className="flex items-center gap-4">{r.provider_cover ? <Photo src={r.provider_cover} alt={r.provider} className="h-12 w-12 rounded-2xl object-cover" /> : <span className="grid h-12 w-12 place-items-center rounded-2xl bg-gradient-to-br from-ocean to-teal text-white"><Bus size={22} /></span>}<div><p className="flex items-center gap-2 font-display text-xl">{r.origin} <ArrowRight size={16} /> {r.destination}</p><p className="text-sm text-ocean/65">{r.provider}{r.est_minutes && <> · <Clock size={13} className="inline" /> about {r.est_minutes} min</>}</p></div></div>
-      <div className="text-right"><p className="font-display text-3xl font-bold">{peso(r.fare)}</p><p className="mb-2 text-xs text-ocean/60">per trip</p><button disabled={!when} onClick={() => book(r.id)} className={`${btn} disabled:opacity-40`}>{when ? 'Request this ride' : 'Pick a time first'}</button></div></article>)}</div></div>);
+      <div className="text-right"><p className="font-display text-3xl font-bold">{peso(r.fare)}</p><p className="mb-2 text-xs text-ocean/60">per trip</p><button disabled={!when} onClick={() => { setMsg(null); setDlg(r); }} className={`${btn} disabled:opacity-40`}>{when ? 'Request this ride' : 'Pick a time first'}</button></div></article>)}</div>
+    <div className="mt-6"><RoamPolicySummary show={['ride']} /></div>
+    {dlg && <RoamDialog kind="ride" title="Request this ride" sub={`${dlg.provider} · ${dlg.origin} to ${dlg.destination}`} summary={`${new Date(when).toLocaleString()} · ${pax} passenger${Number(pax) === 1 ? '' : 's'}`} who="the driver"
+      quotePath={`/transport/ride-quote?routeId=${dlg.id}&pickupAt=${encodeURIComponent(new Date(when).toISOString())}`} postPath="/transport/book" payload={{ routeId: dlg.id, pickupAt: new Date(when).toISOString(), passengers: Number(pax) }}
+      onClose={() => setDlg(null)} onDone={() => { setDlg(null); setMsg({ ok: 1 }); }} />}</div>);
 }

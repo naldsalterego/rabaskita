@@ -30,6 +30,25 @@ export async function saveDocument(file) {
   if (mode.shared) { const r = await fetch('/api/photos', { method: 'POST', headers: { 'Content-Type': 'application/pdf', Authorization: 'Bearer ' + (localStorage.getItem('token') || '') }, body: blob }), j = await r.json().catch(() => ({})); if (!r.ok) throw new Error(j.error || 'Upload failed. Please try again.'); return j.url; }
   const id = newId(); await run('readwrite', s => s.put(blob, id)); return 'idb:' + id;
 }
+// A guest's ID photo. Shrunk like any photo, but kept apart from the public albums: in demo mode it stays in this browser's own store, and in shared
+// mode it goes to a private store that only the guest, the business it was sent to, and the tourism office can open.
+export async function saveIdPhoto(file) {
+  if (!file.type.startsWith('image/')) throw new Error('Please choose a photo of your ID (JPG, PNG or WebP).');
+  if (file.size > 20e6) throw new Error('That image is over 20 MB. Please choose a smaller one.');
+  const blob = await shrink(file, 1600, 'image/jpeg');
+  if (mode.shared) {
+    const r = await fetch('/api/idphotos', { method: 'POST', headers: { 'Content-Type': 'image/jpeg', Authorization: 'Bearer ' + (localStorage.getItem('token') || '') }, body: blob }), j = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(/Sign in/.test(j.error || '') ? 'Please sign in to book.' : j.error || 'Upload failed. Please try again.'); return j.url;
+  }
+  const id = newId(); await run('readwrite', s => s.put(blob, id)); return 'idb:' + id;
+}
+/** A temporary address for viewing an ID photo. Never cached: the shared store checks who is asking every time. */
+export async function idPhotoUrl(ref) {
+  if (!ref) return null; if (ref.startsWith('idb:')) return photoUrl(ref);
+  const r = await fetch(ref, { headers: { Authorization: 'Bearer ' + (localStorage.getItem('token') || '') }, cache: 'no-store' });
+  if (!r.ok) { const j = await r.json().catch(() => ({})); throw new Error(r.status === 404 ? 'This ID photo is no longer available.' : j.error || 'Could not open the ID photo.'); }
+  return URL.createObjectURL(await r.blob());
+}
 export function deletePhoto(ref) { if (typeof indexedDB === 'undefined' || !ref?.startsWith('idb:')) return; urls.delete(ref); run('readwrite', s => s.delete(ref.slice(4))).catch(() => {}); }
 export async function photoUrl(ref) {
   if (!ref) return null; if (!ref.startsWith('idb:')) return ref; if (urls.has(ref)) return urls.get(ref);

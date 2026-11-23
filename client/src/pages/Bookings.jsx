@@ -7,24 +7,27 @@ import { PageHeader, Badge, Empty } from '../components/ui.jsx';
 import { CardFields, emptyCard } from '../components/BookingPolicy.jsx';
 import Messages from '../components/Messages.jsx';
 import ConfirmDialog from '../components/ConfirmDialog.jsx';
+import SignInPrompt from '../components/SignInPrompt.jsx';
 import { tokenize } from '../lib/card.js';
 import { peso, localText } from '../lib/policy.js';
-const BY = { guest: 'You cancelled this booking.', hotel: 'The hotel cancelled this booking.', system: 'This booking was released automatically.' };
+const BY = { guest: 'You cancelled this booking.', hotel: 'The hotel cancelled this booking.', provider: 'The provider cancelled this booking.', system: 'This booking was released automatically.' };
 // What cancelling means for the guest's money. The server worked out the exact consequence (s.terms); this only words it.
 //   lost:    already paid and not refundable   fee: a charge to the card on file   ok: free, or fully refunded
-function cancelInfo(s) {
+function cancelInfo(s, who = 'hotel') {
   const t = s.terms, card = s.card ? `${s.card.brand} ••${s.card.last4}` : 'your card';
   if (!s.tier) return s.payment_status === 'paid' ? { kind: 'lost', amount: s.total } : { kind: 'ok', text: 'Nothing has been paid, so nothing will be charged.' };
-  if (t?.note === 'withdrawn') return { kind: 'ok', withdraw: true, text: t.refund > 0 ? `The hotel has not accepted your request yet. Your ${peso(t.refund)} will be refunded to you in full.` : 'The hotel has not accepted your request yet, and nothing was charged.' };
+  if (t?.note === 'withdrawn') return { kind: 'ok', withdraw: true, text: t.refund > 0 ? `The ${who} has not accepted your request yet. Your ${peso(t.refund)} will be refunded to you in full.` : `The ${who} has not accepted your request yet, and nothing was charged.` };
   if (t?.note === 'free') return { kind: 'ok', text: 'This is a free cancellation. Nothing will be charged.' };
   if (t?.note === 'late') return { kind: 'fee', amount: t.fee, text: `Free cancellation has ended. Cancelling now charges ${peso(t.fee)} to ${card}.` };
   return { kind: 'lost', amount: t?.forfeited || s.charged };
 }
 function CancelDialog({ item, working, onConfirm, onClose }) {
-  const [agree, setAgree] = useState(false), isRental = item.kind === 'rental', r = item.r, s = item.s;
-  const info = isRental ? (r.payment_status === 'paid' ? { kind: 'lost', amount: r.total } : { kind: 'ok', text: 'Nothing has been paid, so nothing will be charged.' }) : cancelInfo(s);
-  const what = isRental ? r.vehicle : s.name, when = isRental ? `${r.start_date} to ${r.end_date}` : `${s.check_in.slice(0, 10)} to ${s.check_out.slice(0, 10)}`;
-  return (<ConfirmDialog title={info.withdraw ? 'Withdraw your request?' : isRental ? 'Cancel this rental?' : 'Cancel your booking?'} confirmLabel={info.withdraw ? 'Yes, withdraw request' : isRental ? 'Yes, cancel rental' : 'Yes, cancel booking'} cancelLabel={isRental ? 'Keep my rental' : 'Keep my booking'}
+  const [agree, setAgree] = useState(false), k = item.kind, r = item.r, t = item.t, s = item.s;
+  const info = k === 'rental' ? (r.tier ? cancelInfo(r, 'provider') : r.payment_status === 'paid' ? { kind: 'lost', amount: r.total } : { kind: 'ok', text: 'Nothing has been paid, so nothing will be charged.' })
+    : k === 'ride' ? (t.tier ? cancelInfo({ ...t, total: t.fare, charged: 0 }, 'driver') : { kind: 'ok', text: 'Nothing has been paid, so nothing will be charged.' }) : cancelInfo(s);
+  const what = k === 'rental' ? r.vehicle : k === 'ride' ? `${t.pickup} to ${t.dropoff}` : s.name, when = k === 'rental' ? `${r.start_date} to ${r.end_date}` : k === 'ride' ? localText(t.pickup_at) : `${s.check_in.slice(0, 10)} to ${s.check_out.slice(0, 10)}`;
+  const noun = k === 'rental' ? 'rental' : k === 'ride' ? 'ride' : 'booking';
+  return (<ConfirmDialog title={info.withdraw ? 'Withdraw your request?' : `Cancel ${k === 'stay' ? 'your' : 'this'} ${noun}?`} confirmLabel={info.withdraw ? 'Yes, withdraw request' : `Yes, cancel ${noun}`} cancelLabel={`Keep my ${noun}`}
     busy={working} disabled={info.kind === 'lost' && !agree} onConfirm={onConfirm} onClose={onClose}>
     <p className="rounded-xl bg-foam p-3"><b>{what}</b><br />{when}</p>
     {info.kind === 'lost' && <div role="alert" className="rounded-xl border-2 border-red-300 bg-red-50 p-3 text-red-900">
@@ -35,12 +38,17 @@ function CancelDialog({ item, working, onConfirm, onClose }) {
     {info.kind === 'ok' && <p className="rounded-xl bg-teal/10 p-3">{info.text}</p>}
   </ConfirmDialog>);
 }
-function StayCard({ s, card, onPay, onCancel, onChanged, setErr }) {
-  const [fix, setFix] = useState(false), [cf, setCf] = useState(emptyCard), [busy, setBusy] = useState(false), active = ['pending', 'confirmed'].includes(s.status);
-  const money = !s.tier ? [s.payment_status === 'paid' ? 'paid' : 'pending', `payment ${s.payment_status}`]
+// The money badge of a booking made under the policy: [tone, words]. Stays, rentals and rides all use it.
+function moneyOf(s) {
+  return !s.tier ? [s.payment_status === 'paid' ? 'paid' : 'pending', `payment ${s.payment_status}`]
     : s.payment_status === 'refunded' ? ['paid', `${peso(s.charged)} refunded`]
+    : s.tier === 'ride' ? ['paid', 'card on file · fare paid to the driver']
     : s.tier === 'guarantee' ? (s.guarantee === 'pending' ? ['pending', 'card needs attention'] : s.guarantee === 'released' ? ['cancelled', 'released'] : ['paid', 'card on file'])
     : ['paid', s.tier === 'deposit' ? `${peso(s.charged)} deposit paid` : `${peso(s.charged)} paid in full`];
+}
+function StayCard({ s, card, onPay, onCancel, onChanged, setErr }) {
+  const [fix, setFix] = useState(false), [cf, setCf] = useState(emptyCard), [busy, setBusy] = useState(false), active = ['pending', 'confirmed'].includes(s.status);
+  const money = moneyOf(s);
   async function saveCard(e) {
     e.preventDefault(); const t = tokenize(cf); if (t.error) return setErr(t.error);
     setBusy(true); setErr('');
@@ -66,21 +74,65 @@ function StayCard({ s, card, onPay, onCancel, onChanged, setErr }) {
     <Messages kind="stay" id={s.id} unread={s.unread_messages} to={s.name} onRead={onChanged} />
   </div>);
 }
+function RentalCard({ r, card, onPay, onCancel, onChanged, setErr }) {
+  const [fix, setFix] = useState(false), [cf, setCf] = useState(emptyCard), [busy, setBusy] = useState(false), active = ['pending', 'confirmed'].includes(r.status), money = moneyOf(r);
+  async function saveCard(e) {
+    e.preventDefault(); const t = tokenize(cf); if (t.error) return setErr(t.error);
+    setBusy(true); setErr('');
+    try { await api(`/rentals/${r.id}/guarantee`, { method: 'POST', body: { card: t.card } }); setFix(false); setCf(emptyCard); onChanged(); } catch (x) { setErr(x.message); }
+    setBusy(false);
+  }
+  return (<div className={card}><div>
+    <p className="font-display text-xl">{r.vehicle}</p>
+    <p className="text-sm text-ocean/70">{r.start_date} <ArrowRight size={12} className="inline" /> {r.end_date} · {r.mode === 'driver' ? `with driver${r.driver_name ? ' (' + r.driver_name + ')' : ''}` : 'self-drive'} · ₱{r.total.toLocaleString()}</p>
+    <p className="text-sm text-ocean/70">To: {r.destinations.join(', ')} · pickup {r.pickup}</p>
+    <p className="mt-1 flex flex-wrap gap-2"><Badge s={r.status}>{r.status === 'pending' && r.tier ? 'waiting for the provider' : r.status}</Badge><Badge s={money[0]}>{money[1]}</Badge></p>
+    {r.tier === 'guarantee' && r.card && <p className="mt-1 text-sm text-ocean/70">{r.card.brand} ••{r.card.last4} on file{active && r.terms && (r.terms.free ? ` · free cancellation until ${localText(r.free_cancel_until)} (Philippine time)` : ` · free cancellation has ended; cancelling now charges ${peso(r.terms.fee)}`)}</p>}
+    {r.tier && r.tier !== 'guarantee' && active && <p className="mt-1 text-sm text-ocean/70">Non-refundable once the provider accepts.{r.tier === 'deposit' ? ' The balance is paid to the provider at pick-up.' : ''}</p>}
+    {r.fee_charged > 0 && <p className="mt-1 text-sm text-red-800">{peso(r.fee_charged)} was charged to your card.</p>}
+    {r.status === 'no_show' && r.tier !== 'guarantee' && <p className="mt-1 text-sm text-ocean/70">Marked as a no-show. The {peso(r.charged)} you paid is kept by the provider.</p>}
+    {!active && r.cancelled_by && <p className="mt-1 text-sm text-ocean/70">{BY[r.cancelled_by]}</p>}
+  </div>
+    <div className="flex flex-wrap gap-2">
+      {!r.tier && r.payment_status === 'pending' && !['cancelled', 'rejected'].includes(r.status) && <button onClick={() => onPay(r.payment_id)} className="rounded-full bg-ocean px-5 py-2 text-sm font-medium text-foam hover:bg-teal">Pay now (sandbox)</button>}
+      {r.guarantee === 'pending' && active && <button onClick={() => setFix(!fix)} className="rounded-full bg-ocean px-5 py-2 text-sm font-medium text-foam hover:bg-teal">Update card</button>}
+      {active && <button onClick={() => onCancel(r)} className="rounded-full border border-line px-4 py-2 text-sm">{r.status === 'pending' && r.tier ? 'Withdraw request' : 'Cancel'}</button>}
+    </div>
+    {fix && <form onSubmit={saveCard} className="w-full basis-full rounded-2xl bg-foam p-4"><p className="mb-2 text-sm">We could not verify your card. Add a valid card before {localText(r.free_cancel_until)} (Philippine time) or the rental is released automatically.</p><CardFields value={cf} onChange={setCf} /><button disabled={busy} className="mt-3 rounded-full bg-ocean px-5 py-2 text-sm font-medium text-foam disabled:opacity-50">{busy ? 'Saving…' : 'Save card'}</button></form>}
+    <Messages kind="rental" id={r.id} unread={r.unread_messages} to="the rental provider" onRead={onChanged} />
+  </div>);
+}
+function RideCard({ t, card, onCancel, onChanged }) {
+  const active = ['pending', 'confirmed'].includes(t.status);
+  return (<div className={card}><div>
+    <p className="font-display text-xl">{t.pickup} <ArrowRight size={14} className="inline" /> {t.dropoff}</p>
+    <p className="text-sm text-ocean/70">{new Date(t.pickup_at).toLocaleString()} · {t.passengers} passenger(s){t.km != null && ` · about ${t.km} km`}{t.tier && ` · fare ${peso(t.fare)}, paid to the driver`}{t.driver_name && ` · driver ${t.driver_name}`}</p>
+    <p className="mt-1 flex flex-wrap gap-2"><Badge s={t.status}>{t.status === 'pending' ? 'waiting for the driver' : t.status}</Badge>{t.tier && <Badge s="paid">card on file</Badge>}</p>
+    {t.tier && t.card && active && t.terms && <p className="mt-1 text-sm text-ocean/70">{t.card.brand} ••{t.card.last4} on file{t.status === 'pending' ? ' · you can withdraw this request for free until the driver accepts it' : t.terms.free ? ` · free cancellation until ${localText(t.free_cancel_until)} (Philippine time)` : ` · free cancellation has ended; cancelling now charges ${peso(t.terms.fee)}`}</p>}
+    {t.fee_charged > 0 && <p className="mt-1 text-sm text-red-800">{peso(t.fee_charged)} was charged to your card.</p>}
+    {!active && t.cancelled_by && <p className="mt-1 text-sm text-ocean/70">{t.cancelled_by === 'guest' ? 'You cancelled this ride.' : t.cancelled_by === 'system' ? 'Nobody answered in time, so this request was released. Nothing was charged.' : 'The driver cancelled this ride.'}</p>}
+  </div>
+    <div className="flex gap-2">{active && new Date(t.pickup_at) > new Date() && <button onClick={() => onCancel(t)} className="rounded-full border border-line px-4 py-2 text-sm">{t.status === 'pending' ? 'Withdraw request' : 'Cancel'}</button>}</div>
+    <Messages kind="ride" id={t.id} unread={t.unread_messages} to="the transport provider" onRead={onChanged} />
+  </div>);
+}
 export default function Bookings() {
   const [d, setD] = useState(null), [err, setErr] = useState(''), [note, setNote] = useState(''), [tab, setTab] = useState('stays'), [ask, setAsk] = useState(null), [working, setWorking] = useState(false);
   const load = () => Promise.all([api('/bookings/mine'), api('/rentals/mine')]).then(([a, b]) => setD({ ...a, rentals: b })).catch(e => setErr(e.message));
-  const cancelRent = (r) => { setErr(''); setNote(''); setAsk({ kind: 'rental', r }); }; const ver = useSyncVersion(); useEffect(() => { load(); }, [ver]);
+  const cancelRent = (r) => { setErr(''); setNote(''); setAsk({ kind: 'rental', r }); }; const cancelRide = (t) => { setErr(''); setNote(''); setAsk({ kind: 'ride', t }); }; const ver = useSyncVersion(); useEffect(() => { load(); }, [ver]);
   const pay = async (id) => { await api(`/payments/${id}/sandbox-confirm`, { method: 'POST' }).catch(e => setErr(e.message)); load(); };
   const cancel = (s) => { setErr(''); setNote(''); setAsk({ kind: 'stay', s }); };
   const confirmCancel = async () => {
     setWorking(true);
     try {
-      if (ask.kind === 'rental') { await api(`/rentals/${ask.r.id}/cancel`, { method: 'POST' }); setNote(ask.r.payment_status === 'paid' ? `Rental cancelled. Your ${peso(ask.r.total)} is not refunded.` : 'Rental cancelled. Nothing was charged.'); }
-      else { const r = await api(`/bookings/stay/${ask.s.id}/cancel`, { method: 'POST' }); setNote(r.refunded > 0 ? `Cancelled. ${peso(r.refunded)} has been refunded to you.` : r.charged > 0 ? `Cancelled. ${peso(r.charged)} was charged to your card.` : r.forfeited > 0 ? `Cancelled. Your ${peso(r.forfeited)} is not refunded.` : 'Cancelled. Nothing was charged.'); }
+      const outcome = (r, what) => (r.refunded > 0 ? `${what} cancelled. ${peso(r.refunded)} has been refunded to you.` : r.charged > 0 ? `${what} cancelled. ${peso(r.charged)} was charged to your card.` : r.forfeited > 0 ? `${what} cancelled. Your ${peso(r.forfeited)} is not refunded.` : `${what} cancelled. Nothing was charged.`);
+      if (ask.kind === 'rental') { const r = await api(`/rentals/${ask.r.id}/cancel`, { method: 'POST' }); setNote(!ask.r.tier && ask.r.payment_status === 'paid' ? `Rental cancelled. Your ${peso(ask.r.total)} is not refunded.` : outcome(r, 'Rental')); }
+      else if (ask.kind === 'ride') setNote(outcome(await api(`/rides/${ask.t.id}/cancel`, { method: 'POST' }), 'Ride'));
+      else setNote(outcome(await api(`/bookings/stay/${ask.s.id}/cancel`, { method: 'POST' }), 'Booking'));
     } catch (e) { setErr(e.message); }
     setWorking(false); setAsk(null); load();
   };
-  if (err && !d) return <main className="mx-auto max-w-3xl px-4 py-10"><Empty>{err.includes('Sign in') ? <>Please <Link className="underline" to="/login">sign in</Link> to see your bookings.</> : err}</Empty></main>;
+  if (err && !d) return err.includes('Sign in') ? <SignInPrompt what="your bookings" /> : <main className="mx-auto max-w-3xl px-4 py-10"><Empty>{err}</Empty></main>;
   if (!d) return <p className="p-8">Loading…</p>;
   const tabs = [['stays', 'Stays', BedDouble, d.stays.length], ['rentals', 'Rentals', Car, d.rentals.length], ['rides', 'Rides', Bus, d.rides.length], ['tables', 'Tables', Utensils, d.tables.length]];
   const card = 'flex flex-wrap items-center justify-between gap-3 rounded-3xl border border-line bg-white p-5';
@@ -91,9 +143,8 @@ export default function Bookings() {
     {err && <p role="alert" className="mt-3 rounded-xl bg-red-50 p-3 text-sm text-red-800">{err}</p>}
     <div className="mt-4 grid gap-3">
       {tab === 'stays' && (d.stays.length === 0 ? <Empty Icon={BedDouble}>No stays yet. <Link className="underline" to="/accommodations">Find a place to stay</Link></Empty> : d.stays.map(s => <StayCard key={s.id} s={s} card={card} onPay={pay} onCancel={cancel} onChanged={load} setErr={setErr} />))}
-      {tab === 'rentals' && (d.rentals.length === 0 ? <Empty Icon={Car}>No rentals yet. <Link className="underline" to="/transportation">Rent a vehicle</Link></Empty> : d.rentals.map(r => <div key={r.id} className={card}><div><p className="font-display text-xl">{r.vehicle}</p><p className="text-sm text-ocean/70">{r.start_date} <ArrowRight size={12} className="inline" /> {r.end_date} · {r.mode === 'driver' ? `with driver${r.driver_name ? ' (' + r.driver_name + ')' : ''}` : 'self-drive'} · ₱{r.total.toLocaleString()}</p><p className="text-sm text-ocean/70">To: {r.destinations.join(', ')} · pickup {r.pickup}</p><p className="mt-1 flex gap-2"><Badge s={r.status} /><Badge s={r.payment_status === 'paid' ? 'paid' : 'pending'}>payment {r.payment_status}</Badge></p></div>
-        <div className="flex gap-2">{r.payment_status === 'pending' && !['cancelled', 'rejected'].includes(r.status) && <button onClick={() => pay(r.payment_id)} className="rounded-full bg-ocean px-5 py-2 text-sm font-medium text-foam hover:bg-teal">Pay now (sandbox)</button>}{['pending', 'confirmed'].includes(r.status) && <button onClick={() => cancelRent(r)} className="rounded-full border border-line px-4 py-2 text-sm">Cancel</button>}</div><Messages kind="rental" id={r.id} unread={r.unread_messages} to="the rental provider" onRead={load} /></div>))}
-      {tab === 'rides' && (d.rides.length === 0 ? <Empty Icon={Bus}>No rides yet. <Link className="underline" to="/transportation">Request a ride</Link></Empty> : d.rides.map(t => <div key={t.id} className={card}><div><p className="font-display text-xl">{t.pickup} <ArrowRight size={14} className="inline" /> {t.dropoff}</p><p className="text-sm text-ocean/70">{new Date(t.pickup_at).toLocaleString()} · {t.passengers} passenger(s){t.driver_name && ` · driver ${t.driver_name}`}</p></div><Badge s={t.status} /><Messages kind="ride" id={t.id} unread={t.unread_messages} to="the transport provider" onRead={load} /></div>))}
+      {tab === 'rentals' && (d.rentals.length === 0 ? <Empty Icon={Car}>No rentals yet. <Link className="underline" to="/transportation">Rent a vehicle</Link></Empty> : d.rentals.map(r => <RentalCard key={r.id} r={r} card={card} onPay={pay} onCancel={cancelRent} onChanged={load} setErr={setErr} />))}
+      {tab === 'rides' && (d.rides.length === 0 ? <Empty Icon={Bus}>No rides yet. <Link className="underline" to="/transportation?tab=commute">Plan a tricycle commute</Link> or <Link className="underline" to="/transportation?tab=rides">request an airport or port ride</Link></Empty> : d.rides.map(t => <RideCard key={t.id} t={t} card={card} onCancel={cancelRide} onChanged={load} />))}
       {tab === 'tables' && (d.tables.length === 0 ? <Empty Icon={Utensils}>No reservations yet. <Link className="underline" to="/restaurants">Find a restaurant</Link></Empty> : d.tables.map(t => <div key={t.id} className={card}><div><p className="font-display text-xl">{t.name}</p><p className="text-sm text-ocean/70">{new Date(t.reserved_at).toLocaleString()} · party of {t.party_size}</p></div><Badge s={t.status} /><Messages kind="table" id={t.id} unread={t.unread_messages} to={t.name} onRead={load} /></div>))}
     </div><p className="mt-4 text-xs text-ocean/55">Payments in this prototype are simulated. No real money moves.</p></main>);
 }
